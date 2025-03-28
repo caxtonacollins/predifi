@@ -31,5 +31,9 @@ pub trait IPredifi<TContractState> {
     fn get_pool_vote(self: @TContractState, pool_id: u256) -> bool;
     fn get_pool_count(self: @TContractState) -> u256;
     fn retrieve_pool(self: @TContractState, pool_id: u256) -> bool;
+    fn register_validator(ref self: TContractState, stake: u256);
+    fn verify_validator_assignment(
+        self: @TContractState, pool_id: u256, validator: ContractAddress,
+    ) -> bool;
+    fn get_validators_count(self: @TContractState) -> u256;
 }
-
