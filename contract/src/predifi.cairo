@@ -11,10 +11,14 @@ pub mod Predifi {
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
     };
-    use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
+    use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address, class_hash::ClassHash};
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
     };
+    use openzeppelin::upgrades::{interface::IUpgradeable, UpgradeableComponent};
+
+    //components
+    component!(path: UpgradeableComponent, storage: upgradeable, event: UpgradeableEvent);
 
     // package imports
     use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
@@ -59,6 +63,9 @@ pub mod Predifi {
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
+        version: u8,
+        #[substorage(v0)]
+        upgradeable: UpgradeableComponent::Storage,
     }
 
     // Events
@@ -71,6 +78,8 @@ pub mod Predifi {
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
+        #[flat]
+        UpgradeableEvent: UpgradeableComponent::Event,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -435,5 +444,17 @@ pub mod Predifi {
                 implied_probability2,
             }
         }
+
+        
     }
+
+    #[abi(embed_v0)]
+    impl UpgradeableImpl of IUpgradeable<ContractState> {
+        fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
+            self.version.write(self.version.read() + 1);
+            self.upgradeable.upgrade(new_class_hash);
+        }
+    }
+
+    impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
 }
