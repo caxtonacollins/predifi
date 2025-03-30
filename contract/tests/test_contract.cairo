@@ -29,19 +29,23 @@ fn owner() -> ContractAddress {
     'owner'.try_into().unwrap()
 }
 
-fn deploy_predifi() -> IPredifiDispatcher {
-    let contract_class = declare("Predifi").unwrap().contract_class();
-
-    let (contract_address, _) = contract_class.deploy(@array![].into()).unwrap();
-    (IPredifiDispatcher { contract_address })
+fn validator_addresses() -> Array<ContractAddress> {
+    let mut address = ArrayTrait::new();
+    address.append(contract_address_const::<'caller1'>());
+    address.append(contract_address_const::<'caller2'>());
+    address.append(contract_address_const::<'caller3'>());
+    address.append(contract_address_const::<'caller4'>());
+    address.append(contract_address_const::<'caller5'>());
+    address.append(contract_address_const::<'caller6'>());
+    address.append(contract_address_const::<'caller7'>());
+    address.append(contract_address_const::<'caller8'>());
+    address.append(contract_address_const::<'caller9'>());
+    address.append(contract_address_const::<'caller10'>());
+    address.into()
 }
 
-const ONE_STRK: u256 = 1_000_000_000_000_000_000;
-
-#[test]
-fn test_create_pool() {
-    let contract = deploy_predifi();
-    let pool_id = contract
+fn create_pool_with_validators(contract: IPredifiDispatcher) -> u256 {
+    contract
         .create_pool(
             'Example Pool',
             Pool::WinBet,
@@ -58,9 +62,40 @@ fn test_create_pool() {
             5,
             false,
             Category::Sports,
-        );
+        )
+}
 
-    assert!(pool_id != 0, "not created");
+fn deploy_predifi() -> IPredifiDispatcher {
+    let contract_class = declare("Predifi").unwrap().contract_class();
+
+    let (contract_address, _) = contract_class.deploy(@array![].into()).unwrap();
+    let dispatcher = (IPredifiDispatcher { contract_address });
+
+    // Register 10 validators
+    let validators = validator_addresses();
+    let mut i: u32 = 0;
+    while i < validators.len().into() {
+        let caller = *validators.at(i);
+
+        start_cheat_caller_address(contract_address, caller);
+
+        dispatcher.register_validator(100);
+        i += 1;
+    }
+
+    let v_count = dispatcher.get_validators_count();
+    assert(v_count == 10, 'Failed to register validators');
+
+    dispatcher
+}
+
+const ONE_STRK: u256 = 1_000_000_000_000_000_000;
+
+#[test]
+fn test_create_pool() {
+    let contract = deploy_predifi();
+    let pool_id = create_pool_with_validators(contract);
+    assert!(pool_id != 0, "Pool not created");
 }
 
 #[test]
@@ -237,24 +272,8 @@ fn get_default_pool_params() -> (
 #[test]
 fn test_vote() {
     let contract = deploy_predifi();
-    let pool_id = contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
+    let pool_id = create_pool_with_validators(contract);
+
     contract.vote(pool_id, 'Team A', 200);
 
     let pool = contract.get_pool(pool_id);
@@ -350,24 +369,8 @@ fn test_when_invalid_option_is_pass() {
 #[should_panic(expected: 'Amount is below minimum')]
 fn test_when_min_bet_amount_less_than_required() {
     let contract = deploy_predifi();
-    let pool_id = contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
+    let pool_id = create_pool_with_validators(contract);
+
     contract.vote(pool_id, 'Team A', 10);
 }
 
@@ -563,6 +566,14 @@ fn test_get_pool_vote() {
 
     assert(!pool_vote, 'Incorrect pool vote');
 }
+
+#[test]
+fn test_validator_registration() {
+    let contract = deploy_predifi();
+    let count = contract.get_validators_count();
+    assert(count == 10_u256, 'Should have 10 validators');
+}
+
 
 #[test]
 fn test_get_pool_count() {
