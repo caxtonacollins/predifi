@@ -11,18 +11,13 @@ pub mod Predifi {
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
     };
-    use starknet::{
-        ContractAddress, get_block_number, get_block_timestamp, get_caller_address,
-        get_contract_address,
-    };
+    use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
     };
 
     // package imports
-    use crate::base::types::{
-        Category, Pool, PoolDetails, PoolOdds, Status, UserStake, ValidatorData,
-    };
+    use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
     use crate::interfaces::ipredifi::IPredifi;
 
     // 1 STRK in WEI
@@ -60,16 +55,10 @@ pub mod Predifi {
         pub accesscontrol: AccessControlComponent::Storage,
         #[substorage(v0)]
         src5: SRC5Component::Storage,
+        validators: Vec<ContractAddress>,
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
-        validators: Vec<ContractAddress>,
-        validator: Map<ContractAddress, ValidatorData>,
-        validators_index: Map<ContractAddress, u256>, // Tracks validator's position in list
-        validators_list: Map<u256, ContractAddress>, // Index -> Address
-        validators_count: u256,
-        pool_validators: Map<(u256, u256), ContractAddress>, // (pool_id, index) -> Address
-        pool_validator_count: Map<u256, u256>,
     }
 
     // Events
@@ -77,7 +66,6 @@ pub mod Predifi {
     #[derive(Drop, starknet::Event)]
     enum Event {
         BetPlaced: BetPlaced,
-        ValidatorRegistered: ValidatorRegistered,
         UserStaked: UserStaked,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
@@ -110,12 +98,6 @@ pub mod Predifi {
     struct Hashed {
         id: felt252,
         login: HashingProperties,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct ValidatorRegistered {
-        validator: ContractAddress,
-        stake: u256,
     }
 
     #[constructor]
@@ -151,7 +133,6 @@ pub mod Predifi {
             let current_time = get_block_timestamp();
             assert!(current_time < poolStartTime, "Start time must be in the future");
             assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
-            assert(self.validators_count.read() >= 10, 'Need 10+ validators');
 
             // Collect pool creation fee (1 STRK)
             self.collect_pool_creation_fee(get_caller_address());
@@ -194,8 +175,6 @@ pub mod Predifi {
                 initial_share_price: 5000, // 0.5 in basis points (10000 = 1.0)
                 exists: true,
             };
-
-            self.select_validators(pool_id);
 
             self.pools.write(pool_id, pool_details);
 
@@ -321,51 +300,6 @@ pub mod Predifi {
         fn retrieve_pool(self: @ContractState, pool_id: u256) -> bool {
             let pool = self.pools.read(pool_id);
             pool.exists
-        }
-
-        fn register_validator(ref self: ContractState, stake: u256) {
-            let caller = get_caller_address();
-            assert(stake > 0, 'Stake must be positive');
-
-            // Read existing validator data
-            let mut data = self.validator.read(caller);
-
-            // Check if already registered using status flag
-            let is_new_validator = !data.status;
-
-            // Update validator data
-            data.status = true;
-            data.preodifiTokenAmount += stake;
-            self.validator.write(caller, data);
-
-            // Only add to list if new validator
-            if is_new_validator {
-                let count = self.validators_count.read();
-                self.validators_list.write(count, caller);
-                self.validators_index.write(caller, count);
-                self.validators_count.write(count + 1_u256);
-            }
-        }
-
-
-        fn verify_validator_assignment(
-            self: @ContractState, pool_id: u256, validator: ContractAddress,
-        ) -> bool {
-            let count = self.pool_validator_count.read(pool_id);
-            let mut i = 0;
-            loop {
-                if i >= count {
-                    break false;
-                }
-                if self.pool_validators.read((pool_id, i)) == validator {
-                    break true;
-                }
-                i += 1;
-            }
-        }
-
-        fn get_validators_count(self: @ContractState) -> u256 {
-            self.validators_count.read()
         }
     }
 
@@ -503,75 +437,6 @@ pub mod Predifi {
                 implied_probability1,
                 implied_probability2,
             }
-        }
-        fn select_validators(ref self: ContractState, pool_id: u256) {
-            let total_validators = self.validators_count.read();
-            assert(total_validators >= 10_u256, 'Insufficient validators');
-
-            // Create a temporary array of validator indexes
-            let mut validator_indexes = ArrayTrait::<u256>::new();
-            let mut i: u256 = 0_u256;
-            while i < total_validators {
-                validator_indexes.append(i);
-                i += 1_u256;
-            }
-
-            // Fisher-Yates shuffle implementation
-            let seed = self.generate_strong_seed(pool_id);
-            let mut rng_state = seed;
-            let mut selected_count: u256 = 0_u256;
-            let mut selected_validators = ArrayTrait::<ContractAddress>::new();
-
-            while selected_count < 10_u256 {
-                // Generate random index using remaining length
-                let remaining = total_validators - selected_count;
-                let rand_num = self.prng(rng_state) % remaining;
-                rng_state = self.prng(rng_state);
-
-                // Get validator address directly from storage
-                let validator_index = validator_indexes
-                    .at((selected_count + rand_num).try_into().unwrap());
-                let validator_addr = self.validators_list.read(*validator_index);
-
-                if self.validator.read(validator_addr).status {
-                    selected_validators.append(validator_addr);
-                    selected_count += 1_u256;
-                }
-            }
-
-            // Write selected validators to storage
-            let mut count: u256 = 0_u256;
-            while count < selected_count {
-                self
-                    .pool_validators
-                    .write((pool_id, count), *selected_validators.at(count.try_into().unwrap()));
-                count += 1_u256;
-            }
-
-            self.pool_validator_count.write(pool_id, selected_count);
-        }
-
-        fn generate_strong_seed(ref self: ContractState, pool_id: u256) -> u256 {
-            let nonce = self.nonce.read();
-            let block_number = get_block_number();
-            let timestamp = get_block_timestamp();
-            let caller = get_caller_address();
-
-            // Build Pedersen hash chain
-            let mut hasher = PedersenTrait::new(0);
-            hasher = hasher.update_with(pool_id);
-            hasher = hasher.update_with(block_number);
-            hasher = hasher.update_with(timestamp);
-            hasher = hasher.update_with(caller);
-            hasher = hasher.update_with(nonce);
-
-            hasher.finalize().try_into().unwrap()
-        }
-
-        fn prng(ref self: ContractState, input: u256) -> u256 {
-            let mut hasher = PoseidonTrait::new();
-            hasher = hasher.update_with(input);
-            hasher.finalize().try_into().unwrap()
         }
     }
 }
