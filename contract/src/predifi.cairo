@@ -4,9 +4,12 @@ pub mod Predifi {
     use core::hash::{HashStateExTrait, HashStateTrait};
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
+    // oz imports
+    use openzeppelin::access::accesscontrol::AccessControlComponent;
+    use openzeppelin::introspection::src5::SRC5Component;
     use starknet::storage::{
-        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
-        StoragePointerWriteAccess,
+        Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
+        StoragePointerWriteAccess, Vec, VecTrait,
     };
     use starknet::{
         ContractAddress, get_block_number, get_block_timestamp, get_caller_address,
@@ -15,7 +18,6 @@ pub mod Predifi {
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
     };
-    // oz imports
 
     // package imports
     use crate::base::types::{
@@ -26,18 +28,43 @@ pub mod Predifi {
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
 
+    // 200 PREDIFI TOKEN in WEI
+    const MIN_STAKE_AMOUNT: u256 = 200_000_000_000_000_000_000;
+
+    // Validator role
+    const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
+
+    // components definition
+    component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
+    component!(path: SRC5Component, storage: src5, event: SRC5Event);
+
+    // AccessControl
+    #[abi(embed_v0)]
+    impl AccessControlImpl =
+        AccessControlComponent::AccessControlImpl<ContractState>;
+    impl AccessControlInternalImpl = AccessControlComponent::InternalImpl<ContractState>;
+
+    // SRC5
+    #[abi(embed_v0)]
+    impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
+
     #[storage]
-    struct Storage {
+    pub struct Storage {
         pools: Map<u256, PoolDetails>, // pool id to pool details struct
         pool_count: u256, // number of pools available totally
         pool_odds: Map<u256, PoolOdds>,
         pool_stakes: Map<u256, UserStake>,
         pool_vote: Map<u256, bool>, // pool id to vote
         user_stakes: Map<(u256, ContractAddress), UserStake>, // Mapping user -> stake details
+        #[substorage(v0)]
+        pub accesscontrol: AccessControlComponent::Storage,
+        #[substorage(v0)]
+        src5: SRC5Component::Storage,
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
-        validators: Map<ContractAddress, ValidatorData>,
+        validators: Vec<ContractAddress>,
+        validator: Map<ContractAddress, ValidatorData>,
         validators_index: Map<ContractAddress, u256>, // Tracks validator's position in list
         validators_list: Map<u256, ContractAddress>, // Index -> Address
         validators_count: u256,
@@ -51,6 +78,11 @@ pub mod Predifi {
     enum Event {
         BetPlaced: BetPlaced,
         ValidatorRegistered: ValidatorRegistered,
+        UserStaked: UserStaked,
+        #[flat]
+        AccessControlEvent: AccessControlComponent::Event,
+        #[flat]
+        SRC5Event: SRC5Component::Event,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -60,6 +92,12 @@ pub mod Predifi {
         option: felt252,
         amount: u256,
         shares: u256,
+    }
+    #[derive(Drop, starknet::Event)]
+    struct UserStaked {
+        pool_id: u256,
+        address: ContractAddress,
+        amount: u256,
     }
 
     #[derive(Drop, Hash)]
@@ -172,11 +210,19 @@ pub mod Predifi {
 
             self.pool_odds.write(pool_id, initial_odds);
 
+            // Add to pool count
+            self.pool_count.write(self.pool_count.read() + 1);
+
             pool_id
         }
 
         fn pool_count(self: @ContractState) -> u256 {
             self.pool_count.read()
+        }
+
+        fn get_pool_creator(self: @ContractState, pool_id: u256) -> ContractAddress {
+            let pool = self.pools.read(pool_id);
+            pool.address
         }
 
         fn pool_odds(self: @ContractState, pool_id: u256) -> PoolOdds {
@@ -239,6 +285,22 @@ pub mod Predifi {
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
 
+        fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
+            assert(amount >= MIN_STAKE_AMOUNT, 'stake amount too low');
+            let address: ContractAddress = get_caller_address();
+            // Add to previous stake if any
+            let mut stake = self.user_stakes.read((pool_id, address));
+            stake.amount = amount + stake.amount;
+            // write the new stake
+            self.user_stakes.write((pool_id, address), stake);
+            // grant the validator role
+            self.accesscontrol._grant_role(VALIDATOR_ROLE, address);
+            // add caller to validator list
+            self.validators.append().write(address);
+            // emit event
+            self.emit(UserStaked { pool_id, address, amount });
+        }
+
         fn get_user_stake(
             self: @ContractState, pool_id: u256, address: ContractAddress,
         ) -> UserStake {
@@ -266,7 +328,7 @@ pub mod Predifi {
             assert(stake > 0, 'Stake must be positive');
 
             // Read existing validator data
-            let mut data = self.validators.read(caller);
+            let mut data = self.validator.read(caller);
 
             // Check if already registered using status flag
             let is_new_validator = !data.status;
@@ -274,7 +336,7 @@ pub mod Predifi {
             // Update validator data
             data.status = true;
             data.preodifiTokenAmount += stake;
-            self.validators.write(caller, data);
+            self.validator.write(caller, data);
 
             // Only add to list if new validator
             if is_new_validator {
@@ -442,7 +504,6 @@ pub mod Predifi {
                 implied_probability2,
             }
         }
-
         fn select_validators(ref self: ContractState, pool_id: u256) {
             let total_validators = self.validators_count.read();
             assert(total_validators >= 10_u256, 'Insufficient validators');
@@ -472,7 +533,7 @@ pub mod Predifi {
                     .at((selected_count + rand_num).try_into().unwrap());
                 let validator_addr = self.validators_list.read(*validator_index);
 
-                if self.validators.read(validator_addr).status {
+                if self.validator.read(validator_addr).status {
                     selected_validators.append(validator_addr);
                     selected_count += 1_u256;
                 }
