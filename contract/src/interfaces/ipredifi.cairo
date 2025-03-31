@@ -33,5 +33,7 @@ pub trait IPredifi<TContractState> {
     fn get_pool_count(self: @TContractState) -> u256;
     fn retrieve_pool(self: @TContractState, pool_id: u256) -> bool;
     fn get_pool_creator(self: @TContractState, pool_id: u256) -> ContractAddress;
+    fn get_creator_fee_percentage(self: @TContractState, pool_id: u256) -> u8;
+    fn get_validator_fee_percentage(self: @TContractState, pool_id: u256) -> u8;
 }
 
