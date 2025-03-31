@@ -832,6 +832,144 @@ fn test_set_pragma_contract() {
     assert_eq!(retrieved_addr, new_pragma);
 }
 
+#[test]
+fn test_get_creator_fee_percentage() {
+    let contract = deploy_predifi();
+
+    let pool_id = contract
+        .create_pool(
+            'Example Pool',
+            Pool::WinBet,
+            "A simple betting pool",
+            "image.png",
+            "event.com/details",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            3,
+            false,
+            Category::Sports,
+        );
+
+    let creator_fee = contract.get_creator_fee_percentage(pool_id);
+
+    assert(creator_fee == 3, 'Creator fee should be 3%');
+}
+
+#[test]
+fn test_get_validator_fee_percentage() {
+    let contract = deploy_predifi();
+
+    let pool_id = contract
+        .create_pool(
+            'Example Pool',
+            Pool::WinBet,
+            "A simple betting pool",
+            "image.png",
+            "event.com/details",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+
+    let validator_fee = contract.get_validator_fee_percentage(pool_id);
+
+    assert(validator_fee == 10, 'Validator fee should be 10%');
+}
+
+#[test]
+fn test_creator_fee_multiple_pools() {
+    let contract = deploy_predifi();
+
+    let pool_id1 = contract
+        .create_pool(
+            'Pool One',
+            Pool::WinBet,
+            "First betting pool",
+            "image1.png",
+            "event.com/details1",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            2,
+            false,
+            Category::Sports,
+        );
+
+    let pool_id2 = contract
+        .create_pool(
+            'Pool Two',
+            Pool::WinBet,
+            "Second betting pool",
+            "image2.png",
+            "event.com/details2",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team X',
+            'Team Y',
+            200,
+            20000,
+            4,
+            false,
+            Category::Sports,
+        );
+
+    let creator_fee1 = contract.get_creator_fee_percentage(pool_id1);
+    let creator_fee2 = contract.get_creator_fee_percentage(pool_id2);
+
+    assert(creator_fee1 == 2, 'Pool 1 creator fee should be 2%');
+    assert(creator_fee2 == 4, 'Pool 2 creator fee should be 4%');
+}
+
+#[test]
+fn test_creator_and_validator_fee_for_same_pool() {
+    let contract = deploy_predifi();
+
+    let pool_id = contract
+        .create_pool(
+            'Example Pool',
+            Pool::WinBet,
+            "A simple betting pool",
+            "image.png",
+            "event.com/details",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+
+    let creator_fee = contract.get_creator_fee_percentage(pool_id);
+    let validator_fee = contract.get_validator_fee_percentage(pool_id);
+
+    assert(creator_fee == 5, 'Creator fee should be 5%');
+    assert(validator_fee == 10, 'Validator fee should be 10%');
+
+    let total_fee = creator_fee + validator_fee;
+    assert(total_fee == 15, 'Total fee should be 15%');
+}
+
 /// testing pragma contract address updation by party who is not an owner
 /// expecting panic - only owner can set pragma contract address
 #[test]
