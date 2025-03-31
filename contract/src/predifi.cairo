@@ -301,6 +301,15 @@ pub mod Predifi {
             let pool = self.pools.read(pool_id);
             pool.exists
         }
+
+        fn get_creator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
+            let pool = self.pools.read(pool_id);
+            pool.creatorFee
+        }
+
+        fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
+            10_u8
+        }
     }
 
     #[generate_trait]
