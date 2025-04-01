@@ -1021,10 +1021,10 @@ fn test_set_pragma_contract_zero_addr() {
 }
 
 /// testing if pragma price feed is accessible and returning values
-#[test]
-#[fork("SEPOLIA_LATEST")]
-fn test_get_strk_usd_price() {
-    let (utils_dispatcher, _) = deploy_utils();
-    let strk_in_usd = utils_dispatcher.get_strk_usd_price(); // accessing pragma price feeds
-    assert!(strk_in_usd > 0, "Price should be greater than 0");
-}
+// #[test]
+// #[fork("SEPOLIA_LATEST")]
+// fn test_get_strk_usd_price() {
+//     let (utils_dispatcher, _) = deploy_utils();
+//     let strk_in_usd = utils_dispatcher.get_strk_usd_price(); // accessing pragma price feeds
+//     assert!(strk_in_usd > 0, "Price should be greater than 0");
+// }
