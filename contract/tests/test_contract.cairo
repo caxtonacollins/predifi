@@ -1019,7 +1019,6 @@ fn test_set_pragma_contract_zero_addr() {
 
     state.set_pragma_contract_address(zero_addr); // expect to panic
 }
-
 /// testing if pragma price feed is accessible and returning values
 // #[test]
 // #[fork("SEPOLIA_LATEST")]
@@ -1028,3 +1027,4 @@ fn test_set_pragma_contract_zero_addr() {
 //     let strk_in_usd = utils_dispatcher.get_strk_usd_price(); // accessing pragma price feeds
 //     assert!(strk_in_usd > 0, "Price should be greater than 0");
 // }
+
