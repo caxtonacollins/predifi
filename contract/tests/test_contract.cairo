@@ -31,23 +31,24 @@ fn deploy_predifi() -> IPredifiDispatcher {
 
 // Helper function for creating pools with default parameters
 fn create_default_pool(contract: IPredifiDispatcher) -> u256 {
-    contract.create_pool(
-        'Example Pool',
-        Pool::WinBet,
-        "A simple betting pool",
-        "image.png",
-        "event.com/details",
-        1710000000,
-        1710003600,
-        1710007200,
-        'Team A',
-        'Team B',
-        100,
-        10000,
-        5,
-        false,
-        Category::Sports,
-    )
+    contract
+        .create_pool(
+            'Example Pool',
+            Pool::WinBet,
+            "A simple betting pool",
+            "image.png",
+            "event.com/details",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        )
 }
 
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -225,7 +226,7 @@ fn get_default_pool_params() -> (
         10_000_000_000_000_000_000,
         5,
         false,
-        Category::Sports
+        Category::Sports,
     )
 }
 
