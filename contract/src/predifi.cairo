@@ -430,11 +430,9 @@ pub mod Predifi {
 
             let validator_count = self.validators.len();
 
-
             // Convert validator_count to u256 for the division
             let validator_count_u256: u256 = validator_count.into();
             let fee_per_validator = total_validator_fee / validator_count_u256;
-
 
             let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
 
@@ -442,13 +440,12 @@ pub mod Predifi {
             let mut i: u64 = 0;
             while i < validator_count {
                 // Add debug info to trace the exact point of failure
-                
+
                 // Safe access to validator - check bounds first
                 if i < self.validators.len() {
                     let validator_address = self.validators.at(i).read();
                     strk_token.transfer(validator_address, fee_per_validator);
-                } else {
-                }
+                } else {}
                 i += 1;
             }
             // Reset the validator fee for this pool after distribution
@@ -465,12 +462,11 @@ pub mod Predifi {
             // Initialize empty array
             let mut validators = array![];
             // Append each validator to the array
-           self.validators.push(validator1);
-           self.validators.push(validator2);
-           self.validators.push(validator3);
-           self.validators.push(validator4);
+            self.validators.push(validator1);
+            self.validators.push(validator2);
+            self.validators.push(validator3);
+            self.validators.push(validator4);
 
-            
             validators
         }
     }

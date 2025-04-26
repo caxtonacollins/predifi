@@ -952,7 +952,6 @@ fn test_distribute_validation_fee() {
     let erc20 = IERC20Dispatcher { contract_address: erc20_address };
     let validators = dispatcher.add_validators(validator1, validator2, validator3, validator4);
 
-
     let initial_contract_balance = erc20.balance_of(dispatcher.contract_address);
     assert(initial_contract_balance == 0, 'incorrect deployment details');
 
@@ -965,7 +964,7 @@ fn test_distribute_validation_fee() {
     dispatcher.collect_pool_creation_fee(POOL_CREATOR);
 
     dispatcher.calculate_validator_fee(18, 10_000);
-   
+
     start_cheat_caller_address(dispatcher.contract_address, dispatcher.contract_address);
     dispatcher.distribute_validator_fees(18);
 
@@ -977,9 +976,6 @@ fn test_distribute_validation_fee() {
     assert(balance_validator3 == 125, 'distribution failed');
     let balance_validator4 = erc20.balance_of(validator4);
     assert(balance_validator4 == 125, 'distribution failed');
-
-
-
 }
 /// testing if pragma price feed is accessible and returning values
 // #[test]
