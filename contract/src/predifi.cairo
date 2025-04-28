@@ -87,6 +87,7 @@ pub mod Predifi {
         BetPlaced: BetPlaced,
         UserStaked: UserStaked,
         FeesCollected: FeesCollected,
+        PoolStateTransition: PoolStateTransition,
         PoolResolved: PoolResolved,
         FeeWithdrawn: FeeWithdrawn,
         #[flat]
@@ -115,6 +116,14 @@ pub mod Predifi {
         pool_id: u256,
         recipient: ContractAddress,
         amount: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct PoolStateTransition {
+        pool_id: u256,
+        previous_status: Status,
+        new_status: Status,
+        timestamp: u64,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -262,6 +271,89 @@ pub mod Predifi {
 
         fn get_pool(self: @ContractState, pool_id: u256) -> PoolDetails {
             self.pools.read(pool_id)
+        }
+        /// This can be called by anyone to update the state of a pool
+        fn update_pool_state(ref self: ContractState, pool_id: u256) -> Status {
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, 'Pool does not exist');
+
+            let current_status = pool.status;
+            let current_time = get_block_timestamp();
+            let mut new_status = current_status;
+
+            // Determine the new status based on current time and pool timestamps
+            if current_time >= pool.poolEndTime && current_status != Status::Closed {
+                new_status = Status::Closed;
+            } else if current_time >= pool.poolLockTime && current_status == Status::Active {
+                new_status = Status::Locked;
+            }
+
+            // Only update if there's a change in status
+            if new_status != current_status {
+                // Update the pool status
+                let mut updated_pool = pool;
+                updated_pool.status = new_status;
+                self.pools.write(pool_id, updated_pool);
+
+                // Emit event for the state transition
+                let transition_event = PoolStateTransition {
+                    pool_id, previous_status: current_status, new_status, timestamp: current_time,
+                };
+                self.emit(Event::PoolStateTransition(transition_event));
+            }
+
+            // Return the (potentially updated) status
+            if new_status != current_status {
+                new_status
+            } else {
+                current_status
+            }
+        }
+
+        fn manually_update_pool_state(
+            ref self: ContractState, pool_id: u256, new_status: Status,
+        ) -> Status {
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, 'Pool does not exist');
+
+            // Check if caller has appropriate role (admin or validator)
+            let caller = get_caller_address();
+            let is_admin = self.accesscontrol.has_role(ADMIN_ROLE, caller);
+            let is_validator = self.accesscontrol.has_role(VALIDATOR_ROLE, caller);
+            assert(is_admin || is_validator, 'Caller not authorized');
+
+            // Enforce status transition rules
+            let current_status = pool.status;
+
+            // Cannot transition backward in state (e.g., Locked -> Active)
+            // Order: Active -> Locked -> Settled -> Closed
+            if (current_status == Status::Active && new_status == Status::Closed)
+                || (current_status == Status::Locked && new_status == Status::Active)
+                || (current_status == Status::Settled
+                    && (new_status == Status::Active || new_status == Status::Locked))
+                || (current_status == Status::Closed) {
+                // Invalid transition
+                assert(false, 'Invalid state transition');
+            }
+
+            // Don't update if status is the same
+            if new_status == current_status {
+                return current_status;
+            }
+
+            // Update the pool status
+            let mut updated_pool = pool;
+            updated_pool.status = new_status;
+            self.pools.write(pool_id, updated_pool);
+
+            // Emit event for the manual state transition
+            let current_time = get_block_timestamp();
+            let transition_event = PoolStateTransition {
+                pool_id, previous_status: current_status, new_status, timestamp: current_time,
+            };
+            self.emit(Event::PoolStateTransition(transition_event));
+
+            new_status
         }
 
         fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) {
