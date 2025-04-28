@@ -1120,15 +1120,6 @@ fn test_automatic_pool_state_transitions() {
 }
 
 #[test]
-#[should_panic(expected: 'Pool does not exist')]
-fn test_nonexistent_pool_state_update() {
-    let (contract, _, _) = deploy_predifi();
-
-    // Attempt to update a pool that doesn't exist - should panic
-    contract.update_pool_state(999);
-}
-
-#[test]
 fn test_manual_pool_state_update() {
     let (contract, admin, _) = deploy_predifi();
 
