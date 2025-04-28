@@ -1,5 +1,5 @@
 use starknet::ContractAddress;
-use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, UserStake};
+use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
 #[starknet::interface]
 pub trait IPredifi<TContractState> {
     // Pool Creation and Management
@@ -45,4 +45,8 @@ pub trait IPredifi<TContractState> {
         validator3: ContractAddress,
         validator4: ContractAddress,
     ) -> Array<ContractAddress>;
+    fn update_pool_state(ref self: TContractState, pool_id: u256) -> Status;
+    fn manually_update_pool_state(
+        ref self: TContractState, pool_id: u256, new_status: Status,
+    ) -> Status;
 }

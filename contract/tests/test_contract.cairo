@@ -9,8 +9,8 @@ use core::serde::Serde;
 use core::traits::{Into, TryInto};
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
-    stop_cheat_caller_address, test_address,
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp,
+    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{
@@ -986,4 +986,382 @@ fn test_distribute_validation_fee() {
 //     assert!(strk_in_usd > 0, "Price should be greater than 0");
 // }
 
+#[test]
+fn test_automatic_pool_state_transitions() {
+    let (contract, admin, erc20_address) = deploy_predifi();
+
+    // Get current time
+    let current_time = get_block_timestamp();
+
+    // Add token approval
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    // Create a pool with specific timestamps
+    let active_pool_id = contract
+        .create_pool(
+            'Active Pool',
+            Pool::WinBet,
+            "Pool in active state",
+            "image.png",
+            "event.com/details",
+            current_time + 1000, // start time in future
+            current_time + 2000, // lock time in future
+            current_time + 3000, // end time in future
+            'Option A',
+            'Option B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Verify initial state
+    let pool = contract.get_pool(active_pool_id);
+    assert(pool.status == Status::Active, 'Initial state should be Active');
+
+    // Test no change when time hasn't reached lock time
+    start_cheat_block_timestamp(contract.contract_address, current_time + 1500);
+    let same_state = contract.update_pool_state(active_pool_id);
+    assert(same_state == Status::Active, 'State should remain Active');
+
+    // Check pool state is still Active
+    let pool_after_check = contract.get_pool(active_pool_id);
+    assert(pool_after_check.status == Status::Active, 'Status should not change');
+
+    // Test transition: Active -> Locked
+    // Set block timestamp to just after lock time
+    start_cheat_block_timestamp(contract.contract_address, current_time + 2001);
+    let new_state = contract.update_pool_state(active_pool_id);
+    assert(new_state == Status::Locked, 'State should be Locked');
+
+    // Verify state was actually updated in storage
+    let locked_pool = contract.get_pool(active_pool_id);
+    assert(locked_pool.status == Status::Locked, 'should be Locked in storage');
+
+    // Try updating again - should stay in Locked state
+    let same_locked_state = contract.update_pool_state(active_pool_id);
+    assert(same_locked_state == Status::Locked, 'Should remain Locked');
+
+    // Test transition: Locked -> Settled
+    // Set block timestamp to just after end time
+    start_cheat_block_timestamp(contract.contract_address, current_time + 3001);
+    let new_state = contract.update_pool_state(active_pool_id);
+    assert(new_state == Status::Settled, 'State should be Settled');
+
+    // Verify state was updated in storage
+    let settled_pool = contract.get_pool(active_pool_id);
+    assert(settled_pool.status == Status::Settled, 'should be Settled in storage');
+
+    // Test transition: Settled -> Closed
+    // Set block timestamp to 24 hours + 1 second after end time
+    start_cheat_block_timestamp(contract.contract_address, current_time + 3000 + 86401);
+    let final_state = contract.update_pool_state(active_pool_id);
+    assert(final_state == Status::Closed, 'State should be Closed');
+
+    // Verify state was updated in storage
+    let closed_pool = contract.get_pool(active_pool_id);
+    assert(closed_pool.status == Status::Closed, 'should be Closed in storage');
+
+    // Test that no further transitions occur once Closed
+    // Set block timestamp to much later
+    start_cheat_block_timestamp(contract.contract_address, current_time + 10000);
+    let final_state = contract.update_pool_state(active_pool_id);
+    assert(final_state == Status::Closed, 'Should remain Closed');
+
+    // Reset block timestamp cheat
+    stop_cheat_block_timestamp(contract.contract_address);
+}
+
+#[test]
+#[should_panic(expected: 'Pool does not exist')]
+fn test_nonexistent_pool_state_update() {
+    let (contract, _, _) = deploy_predifi();
+
+    // Attempt to update a pool that doesn't exist - should panic
+    contract.update_pool_state(999);
+}
+
+#[test]
+fn test_manual_pool_state_update() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Get current time
+    let current_time = get_block_timestamp();
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+    start_cheat_caller_address(contract.contract_address, user);
+    // Create a pool with specific timestamps
+    let pool_id = contract
+        .create_pool(
+            'Test Pool',
+            Pool::WinBet,
+            "A pool for testing manual updates",
+            "image.png",
+            "event.com/details",
+            current_time + 1000,
+            current_time + 2000,
+            current_time + 3000,
+            'Option A',
+            'Option B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+
+    // Verify initial state
+    let pool = contract.get_pool(pool_id);
+    assert(pool.status == Status::Active, 'Initial state should be Active');
+
+    // Manually update to Locked state
+    start_cheat_caller_address(contract.contract_address, admin);
+    let locked_state = contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
+
+    assert(locked_state == Status::Locked, 'State should be Locked');
+
+    // Verify state change in storage
+    let locked_pool = contract.get_pool(pool_id);
+    assert(locked_pool.status == Status::Locked, 'should be Locked in storage');
+
+    // Update to Settled state
+    start_cheat_caller_address(contract.contract_address, admin);
+    let settled_state = contract.manually_update_pool_state(pool_id, Status::Settled);
+    stop_cheat_caller_address(contract.contract_address);
+
+    assert(settled_state == Status::Settled, 'State should be Settled');
+
+    // Verify state change in storage
+    let settled_pool = contract.get_pool(pool_id);
+    assert(settled_pool.status == Status::Settled, 'should be Settled in storage');
+
+    // Update to Closed state
+    start_cheat_caller_address(contract.contract_address, admin);
+    let closed_state = contract.manually_update_pool_state(pool_id, Status::Closed);
+    stop_cheat_caller_address(contract.contract_address);
+
+    assert(closed_state == Status::Closed, 'State should be Closed');
+
+    // Verify final state in storage
+    let final_pool = contract.get_pool(pool_id);
+    assert(final_pool.status == Status::Closed, 'should be Closed in storage');
+}
+
+#[test]
+#[should_panic(expected: 'Caller not authorized')]
+fn test_unauthorized_manual_update() {
+    let (contract, admin, erc20_address) = deploy_predifi();
+
+    // Random unauthorized address
+    let unauthorized = contract_address_const::<'unauthorized'>();
+
+    // Get current time
+    let current_time = get_block_timestamp();
+
+    // Add token approval for admin
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create pool as admin
+    start_cheat_caller_address(contract.contract_address, admin);
+    let pool_id = contract
+        .create_pool(
+            'Test Pool',
+            Pool::WinBet,
+            "A pool for testing unauthorized updates",
+            "image.png",
+            "event.com/details",
+            current_time + 1000,
+            current_time + 2000,
+            current_time + 3000,
+            'Option A',
+            'Option B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Attempt unauthorized update - should panic with 'Caller not authorized'
+    start_cheat_caller_address(contract.contract_address, unauthorized);
+    contract.manually_update_pool_state(pool_id, Status::Locked); // This should panic
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[should_panic(expected: 'Invalid state transition')]
+fn test_invalid_state_transition() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Get current time
+    let current_time = get_block_timestamp();
+
+    // Add token approval for user
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create pool as user
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = contract
+        .create_pool(
+            'Test Pool',
+            Pool::WinBet,
+            "A pool for testing invalid transitions",
+            "image.png",
+            "event.com/details",
+            current_time + 1000,
+            current_time + 2000,
+            current_time + 3000,
+            'Option A',
+            'Option B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    // Update to Locked
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+
+    // Try to revert back to Active - should fail with 'Invalid state transition'
+    contract.manually_update_pool_state(pool_id, Status::Active);
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_no_change_on_same_state() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Get current time
+    let current_time = get_block_timestamp();
+
+    // Add token approval for user
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create pool as user
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = contract
+        .create_pool(
+            'Test Pool',
+            Pool::WinBet,
+            "A pool for testing same state updates",
+            "image.png",
+            "event.com/details",
+            current_time + 1000,
+            current_time + 2000,
+            current_time + 3000,
+            'Option A',
+            'Option B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    // Try to update to the same state (Active)
+    let same_state = contract.manually_update_pool_state(pool_id, Status::Active);
+    stop_cheat_caller_address(contract.contract_address);
+
+    assert(same_state == Status::Active, 'Should return same state');
+
+    // Verify state remains unchanged
+    let unchanged_pool = contract.get_pool(pool_id);
+    assert(unchanged_pool.status == Status::Active, 'State should not change');
+}
+
+#[test]
+#[should_panic(expected: 'Pool does not exist')]
+fn test_manual_update_nonexistent_pool() {
+    let (contract, admin, _) = deploy_predifi();
+
+    // Try to update a nonexistent pool
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(999, Status::Locked); // This should panic
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_validator_can_update_state() {
+    let (mut contract, admin, erc20_address) = deploy_predifi();
+
+    // Create a validator
+    let validator = contract_address_const::<'validator'>();
+
+    // Add token approval for admin
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Add validators
+    let validator_array = contract
+        .add_validators(
+            validator,
+            contract_address_const::<'v2'>(),
+            contract_address_const::<'v3'>(),
+            contract_address_const::<'v4'>(),
+        );
+
+    // Get current time
+    let current_time = get_block_timestamp();
+
+    // Create a pool using admin
+    start_cheat_caller_address(contract.contract_address, admin);
+    let pool_id = contract
+        .create_pool(
+            'Validator Test Pool',
+            Pool::WinBet,
+            "A pool for testing validator updates",
+            "image.png",
+            "event.com/details",
+            current_time + 1000,
+            current_time + 2000,
+            current_time + 3000,
+            'Option A',
+            'Option B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Validator updates state
+    start_cheat_caller_address(contract.contract_address, validator);
+    let updated_state = contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
+
+    assert(updated_state == Status::Locked, 'Validator update should succeed');
+
+    // Verify state change
+    let updated_pool = contract.get_pool(pool_id);
+    assert(updated_pool.status == Status::Locked, 'should be updated by validator');
+}
 
