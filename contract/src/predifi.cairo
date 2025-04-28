@@ -286,8 +286,7 @@ pub mod Predifi {
             if current_time >= pool.poolEndTime {
                 if current_status == Status::Active || current_status == Status::Locked {
                     new_status = Status::Settled;
-                }// If already Settled and 24 hours passed since end time, move to Closed
-                else if current_status == Status::Settled
+                } else if current_status == Status::Settled
                     && current_time >= (pool.poolEndTime + 86400) {
                     new_status = Status::Closed;
                 }
