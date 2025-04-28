@@ -272,6 +272,7 @@ pub mod Predifi {
         fn get_pool(self: @ContractState, pool_id: u256) -> PoolDetails {
             self.pools.read(pool_id)
         }
+
         /// This can be called by anyone to update the state of a pool
         fn update_pool_state(ref self: ContractState, pool_id: u256) -> Status {
             let pool = self.pools.read(pool_id);
@@ -282,8 +283,14 @@ pub mod Predifi {
             let mut new_status = current_status;
 
             // Determine the new status based on current time and pool timestamps
-            if current_time >= pool.poolEndTime && current_status != Status::Closed {
-                new_status = Status::Closed;
+            if current_time >= pool.poolEndTime {
+                if current_status == Status::Active || current_status == Status::Locked {
+                    new_status = Status::Settled;
+                }// If already Settled and 24 hours passed since end time, move to Closed
+                else if current_status == Status::Settled
+                    && current_time >= (pool.poolEndTime + 86400) {
+                    new_status = Status::Closed;
+                }
             } else if current_time >= pool.poolLockTime && current_status == Status::Active {
                 new_status = Status::Locked;
             }
@@ -310,6 +317,7 @@ pub mod Predifi {
             }
         }
 
+        /// Manually update the state of a pool - can only be called by admin or validator
         fn manually_update_pool_state(
             ref self: ContractState, pool_id: u256, new_status: Status,
         ) -> Status {
@@ -325,21 +333,25 @@ pub mod Predifi {
             // Enforce status transition rules
             let current_status = pool.status;
 
-            // Cannot transition backward in state (e.g., Locked -> Active)
-            // Order: Active -> Locked -> Settled -> Closed
-            if (current_status == Status::Active && new_status == Status::Closed)
-                || (current_status == Status::Locked && new_status == Status::Active)
-                || (current_status == Status::Settled
-                    && (new_status == Status::Active || new_status == Status::Locked))
-                || (current_status == Status::Closed) {
-                // Invalid transition
-                assert(false, 'Invalid state transition');
-            }
-
             // Don't update if status is the same
             if new_status == current_status {
                 return current_status;
             }
+
+            // Check for invalid transitions
+            let is_valid_transition = if is_admin {
+                !(current_status == Status::Locked && new_status == Status::Active)
+                    && !(current_status == Status::Settled
+                        && (new_status == Status::Active || new_status == Status::Locked))
+                    && !(current_status == Status::Closed)
+            } else {
+                // Active -> Locked -> Settled -> Closed
+                (current_status == Status::Active && new_status == Status::Locked)
+                    || (current_status == Status::Locked && new_status == Status::Settled)
+                    || (current_status == Status::Settled && new_status == Status::Closed)
+            };
+
+            assert(is_valid_transition, 'Invalid state transition');
 
             // Update the pool status
             let mut updated_pool = pool;
