@@ -49,4 +49,19 @@ pub trait IPredifi<TContractState> {
     fn manually_update_pool_state(
         ref self: TContractState, pool_id: u256, new_status: Status,
     ) -> Status;
+
+    fn get_user_pool_count(self: @TContractState, user: ContractAddress) -> u256;
+    fn check_user_participated(self: @TContractState, user: ContractAddress, pool_id: u256) -> bool;
+    fn get_user_pools(
+        self: @TContractState, user: ContractAddress, status_filter: Option<Status>,
+    ) -> Array<u256>;
+    fn has_user_participated_in_pool(
+        self: @TContractState, user: ContractAddress, pool_id: u256,
+    ) -> bool;
+
+    fn get_user_active_pools(self: @TContractState, user: ContractAddress) -> Array<u256>;
+
+    fn get_user_locked_pools(self: @TContractState, user: ContractAddress) -> Array<u256>;
+
+    fn get_user_settled_pools(self: @TContractState, user: ContractAddress) -> Array<u256>;
 }

@@ -1365,3 +1365,700 @@ fn test_validator_can_update_state() {
     assert(updated_pool.status == Status::Locked, 'should be updated by validator');
 }
 
+
+#[test]
+fn test_track_user_participation() {
+    // Deploy contracts
+    let (contract, user1, erc20_address) = deploy_predifi();
+
+    // Approve token spending for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, user1);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, user1);
+    // Create a test pool
+    let pool_id = create_default_pool(contract);
+
+    // Check that user hasn't participated in any pools yet
+    assert(contract.get_user_pool_count(user1) == 0, 'Should be 0');
+    assert(!contract.has_user_participated_in_pool(user1, pool_id), 'No participation');
+
+    // User votes in the pool
+    contract.vote(pool_id, 'Team A', 200);
+
+    // Check that participation is tracked
+    assert(contract.get_user_pool_count(user1) == 1, 'Count should be 1');
+    assert(contract.has_user_participated_in_pool(user1, pool_id), 'Should participate');
+
+    // Create another pool
+    let pool_id2 = create_default_pool(contract);
+
+    // User votes in second pool
+    contract.vote(pool_id2, 'Team A', 200);
+
+    // Check count increased
+    assert(contract.get_user_pool_count(user1) == 2, 'Count should be 2');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+
+#[test]
+fn test_get_user_pools() {
+    let (contract, user, erc20_address) = deploy_predifi();
+
+    // Approve token spending for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create three pools
+    let pool_id1 = create_default_pool(contract);
+    let pool_id2 = create_default_pool(contract);
+    let pool_id3 = create_default_pool(contract);
+
+    // User participates in pools 1 and 3
+    contract.vote(pool_id1, 'Team A', 200);
+    contract.vote(pool_id3, 'Team A', 200);
+
+    // Get all participated pools
+    let user_pools = contract.get_user_pools(user, Option::None);
+
+    // Verify the user has participated in exactly 2 pools
+    assert(user_pools.len() == 2, 'Should have 2 pools');
+
+    // Check that pools 1 and 3 are in the array
+    // We need to check each value manually
+    let mut found_pool1 = false;
+    let mut found_pool2 = false;
+    let mut found_pool3 = false;
+
+    let mut i = 0;
+    while i < user_pools.len() {
+        let pool_id = *user_pools.at(i);
+        if pool_id == pool_id1 {
+            found_pool1 = true;
+        } else if pool_id == pool_id2 {
+            found_pool2 = true;
+        } else if pool_id == pool_id3 {
+            found_pool3 = true;
+        }
+        i += 1;
+    }
+
+    assert(found_pool1, 'Pool 1 not found');
+    assert(!found_pool2, 'Pool 2 found');
+    assert(found_pool3, 'Pool 3 not found');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+
+#[test]
+fn test_stake_updates_participation() {
+    // Deploy contracts
+    let (contract, user, erc20_address) = deploy_predifi();
+
+    // Approve token spending for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, user);
+    // Create a test pool
+    let pool_id = create_default_pool(contract);
+    // Verify user hasn't participated yet
+    assert(contract.get_user_pool_count(user) == 0, 'Should be 0');
+
+    // User stakes in the pool
+    let stake_amount: u256 = 200_000_000_000_000_000_000;
+    contract.stake(pool_id, stake_amount);
+
+    // Check that participation is tracked
+    assert(contract.get_user_pool_count(user) == 1, 'Count should be 1');
+    assert(contract.has_user_participated_in_pool(user, pool_id), 'Should participate');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+
+#[test]
+fn test_multiple_actions_single_pool() {
+    // Deploy contracts
+    let (contract, user1, erc20_address) = deploy_predifi();
+
+    // Approve token spending for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, user1);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, user1);
+    // Create a test pool
+    let pool_id = create_default_pool(contract);
+
+    // User votes in the pool
+    contract.vote(pool_id, 'Team A', 200);
+
+    // Check participation count
+    assert(contract.get_user_pool_count(user1) == 1, 'Count should be 1');
+
+    // User also stakes in the same pool
+    let stake_amount: u256 = 200_000_000_000_000_000_000;
+    contract.stake(pool_id, stake_amount);
+
+    // Count should still be 1 as it's the same pool
+    assert(contract.get_user_pool_count(user1) == 1, 'Should still be 1');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_multiple_users_pool_tracking() {
+    let (contract, admin, erc20_address) = deploy_predifi();
+
+    // Create two additional users
+    let user1 = contract_address_const::<1>();
+    let user2 = contract_address_const::<2>();
+    let admi: ContractAddress = contract_address_const::<'admin'>();
+
+    // Approve token spending for all users
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    // Mint some tokens for the users
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.transfer(user1, 1000_000_000_000_000_000_000);
+    erc20.transfer(user2, 1000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Approve for admin
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Approve for user1
+    start_cheat_caller_address(erc20_address, user1);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Approve for user2
+    start_cheat_caller_address(erc20_address, user2);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin creates pools
+    start_cheat_caller_address(contract.contract_address, admin);
+    let pool_id1 = create_default_pool(contract);
+    let pool_id2 = create_default_pool(contract);
+    let pool_id3 = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // User1 participates in pools 1 and 2
+    start_cheat_caller_address(contract.contract_address, user1);
+    contract.vote(pool_id1, 'Team A', 200);
+    contract.vote(pool_id2, 'Team A', 200);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // User2 participates in pools 2 and 3
+    start_cheat_caller_address(contract.contract_address, user2);
+    contract.vote(pool_id2, 'Team B', 300);
+    contract.vote(pool_id3, 'Team A', 300);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Check user1's pools
+    let user1_pools = contract.get_user_pools(user1, Option::None);
+    assert(user1_pools.len() == 2, 'User1 should have 2 pools');
+    assert(contract.has_user_participated_in_pool(user1, pool_id1), 'User1 should be in pool 1');
+    assert(contract.has_user_participated_in_pool(user1, pool_id2), 'User1 should be in pool 2');
+    assert(
+        !contract.has_user_participated_in_pool(user1, pool_id3), 'User1 should not be in pool 3',
+    );
+
+    // Check user2's pools
+    let user2_pools = contract.get_user_pools(user2, Option::None);
+    assert(user2_pools.len() == 2, 'User2 should have 2 pools');
+    assert(
+        !contract.has_user_participated_in_pool(user2, pool_id1), 'User2 should not be in pool 1',
+    );
+    assert(contract.has_user_participated_in_pool(user2, pool_id2), 'User2 should be in pool 2');
+    assert(contract.has_user_participated_in_pool(user2, pool_id3), 'User2 should be in pool 3');
+
+    // Admin changes status of pool 2 to locked
+    start_cheat_caller_address(contract.contract_address, admi);
+    contract.manually_update_pool_state(pool_id2, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Check that pool status changes are reflected for both users
+    let user1_active = contract.get_user_active_pools(user1);
+    assert(user1_active.len() == 1, 'User1 should have 1 active pool');
+    assert(*user1_active.at(0) == pool_id1, 'User1 active pool  1');
+
+    let user1_locked = contract.get_user_locked_pools(user1);
+    assert(user1_locked.len() == 1, 'User1 should have 1 locked pool');
+    assert(*user1_locked.at(0) == pool_id2, 'User1 locked pool  2');
+
+    let user2_active = contract.get_user_active_pools(user2);
+    assert(user2_active.len() == 1, 'User2 should have 1 active pool');
+    assert(*user2_active.at(0) == pool_id3, 'User2 active pool 3');
+
+    let user2_locked = contract.get_user_locked_pools(user2);
+    assert(user2_locked.len() == 1, 'User2 should have 1 locked pool');
+    assert(*user2_locked.at(0) == pool_id2, 'User2 locked  pool 2');
+}
+
+
+#[test]
+fn test_get_user_pools_by_status() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Approve token spending for pool creation and betting
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    // Approve the contract to spend tokens
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create three pools
+    let pool_id1 = create_default_pool(contract);
+    let pool_id2 = create_default_pool(contract);
+    let pool_id3 = create_default_pool(contract);
+    let pool_id4 = create_default_pool(contract);
+
+    // User participates in all pools
+    contract.vote(pool_id1, 'Team A', 200);
+    contract.vote(pool_id2, 'Team A', 200);
+    contract.vote(pool_id3, 'Team A', 200);
+    contract.vote(pool_id4, 'Team A', 200);
+
+    // All pools should be active by default
+    let active_pools = contract.get_user_active_pools(user);
+    assert(active_pools.len() == 4, 'Need 4 active pools');
+
+    // No locked, settled, or closed pools yet
+    let locked_pools = contract.get_user_locked_pools(user);
+    assert(locked_pools.len() == 0, 'Need 0 locked pools');
+
+    let settled_pools = contract.get_user_settled_pools(user);
+    assert(settled_pools.len() == 0, 'Need 0 settled pools');
+    stop_cheat_caller_address(contract.contract_address);
+
+    start_cheat_caller_address(contract.contract_address, admin);
+
+    // Transition pool 2 to Locked status
+    contract.manually_update_pool_state(pool_id2, Status::Locked);
+
+    // Transition pool 3 to Locked and then to Settled
+    contract.manually_update_pool_state(pool_id3, Status::Locked);
+    contract.manually_update_pool_state(pool_id3, Status::Settled);
+
+    // Transition pool 4 through all states to Closed
+    contract.manually_update_pool_state(pool_id4, Status::Locked);
+    contract.manually_update_pool_state(pool_id4, Status::Settled);
+    contract.manually_update_pool_state(pool_id4, Status::Closed);
+    stop_cheat_caller_address(contract.contract_address);
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Check active pools - should only be pool 1
+    let active_pools = contract.get_user_active_pools(user);
+    assert(active_pools.len() == 1, 'Need 1 active pool');
+    assert(*active_pools.at(0) == pool_id1, 'Wrong active pool ID');
+
+    // Check locked pools - should only be pool 2
+    let locked_pools = contract.get_user_locked_pools(user);
+    assert(locked_pools.len() == 1, 'Need 1 locked pool');
+    assert(*locked_pools.at(0) == pool_id2, 'Wrong locked pool ID');
+
+    // Check settled pools - should only be pool 3
+    let settled_pools = contract.get_user_settled_pools(user);
+    assert(settled_pools.len() == 1, 'Need 1 settled pool');
+    assert(*settled_pools.at(0) == pool_id3, 'Wrong settled pool ID');
+
+    // Check all pools - should be all 4
+    let all_pools = contract.get_user_pools(user, Option::None);
+    assert(all_pools.len() == 4, 'Need 4 total pools');
+
+    // Additional verification: Check if the user participation tracking is correct
+    assert(contract.has_user_participated_in_pool(user, pool_id1), 'User should be in pool 1');
+    assert(contract.has_user_participated_in_pool(user, pool_id2), 'User should be in pool 2');
+    assert(contract.has_user_participated_in_pool(user, pool_id3), 'User should be in pool 3');
+    assert(contract.has_user_participated_in_pool(user, pool_id4), 'User should be in pool 4');
+
+    // Verify total user pool count
+    assert(contract.get_user_pool_count(user) == 4, 'User should have 4 pools');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+
+#[test]
+fn test_user_pools_with_time_based_transitions() {
+    let (contract, user, erc20_address) = deploy_predifi();
+
+    // Approve token spending
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Get current timestamp
+    let current_time = get_block_timestamp();
+
+    // Create pools with different timestamps
+    // Pool 1: Standard timeframes
+    let pool_id1 = contract
+        .create_pool(
+            'Pool 1',
+            Pool::WinBet,
+            "First pool",
+            "image1.jpg",
+            "https://example.com/source1",
+            current_time + 3600, // startTime: now + 1 hour
+            current_time + 7200, // lockTime: now + 2 hours
+            current_time + 10800, // endTime: now + 3 hours
+            'Team A',
+            'Team B',
+            100, // minBetAmount
+            1000, // maxBetAmount
+            1, // creatorFee
+            false, // isPrivate
+            Category::Sports,
+        );
+
+    // Pool 2: Shorter timeframes
+    let pool_id2 = contract
+        .create_pool(
+            'Pool 2',
+            Pool::WinBet,
+            "Second pool",
+            "image2.jpg",
+            "https://example.com/source2",
+            current_time + 1800, // startTime: now + 0.5 hour
+            current_time + 3600, // lockTime: now + 1 hour
+            current_time + 5400, // endTime: now + 1.5 hours
+            'Option A',
+            'Option B',
+            100,
+            1000,
+            1,
+            false,
+            Category::Crypto,
+        );
+
+    // User participates in both pools
+    contract.vote(pool_id1, 'Team A', 200);
+    contract.vote(pool_id2, 'Option A', 200);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Initially all pools should be active
+    let active_pools = contract.get_user_active_pools(user);
+    assert(active_pools.len() == 2, 'Should have 2 active pools');
+
+    // Time warp to when pool 2 should be locked but pool 1 still active
+    // Now + 1.25 hours (4500 seconds)
+    start_cheat_block_timestamp(contract.contract_address, current_time + 4500);
+
+    // Update the pool states based on current time
+    contract.update_pool_state(pool_id1);
+    contract.update_pool_state(pool_id2);
+
+    // Check statuses
+    let active_pools = contract.get_user_active_pools(user);
+    assert(active_pools.len() == 1, 'Should have 1 active pool');
+    assert(*active_pools.at(0) == pool_id1, 'Pool 1 should be active');
+
+    let locked_pools = contract.get_user_locked_pools(user);
+    assert(locked_pools.len() == 1, 'Should have 1 locked pool');
+    assert(*locked_pools.at(0) == pool_id2, 'Pool 2 should be locked');
+
+    // Time warp to when pool 2 should be settled and pool 1 locked
+    // Now + 2.5 hours (9000 seconds)
+    start_cheat_block_timestamp(contract.contract_address, current_time + 9000);
+
+    // Update the pool states
+    contract.update_pool_state(pool_id1);
+    contract.update_pool_state(pool_id2);
+
+    // Check statuses
+    let active_pools = contract.get_user_active_pools(user);
+    assert(active_pools.len() == 0, 'Should have 0 active pools');
+
+    let locked_pools = contract.get_user_locked_pools(user);
+    assert(locked_pools.len() == 1, 'Should have 1 locked pool');
+    assert(*locked_pools.at(0) == pool_id1, 'Pool 1 should be locked');
+
+    let settled_pools = contract.get_user_settled_pools(user);
+    assert(settled_pools.len() == 1, 'Should have 1 settled pool');
+    assert(*settled_pools.at(0) == pool_id2, 'Pool 2 should be settled');
+
+    // Time warp to when both pools should be settled
+    // Now + 4 hours (14400 seconds)
+    start_cheat_block_timestamp(contract.contract_address, current_time + 14400);
+
+    // Update the pool states
+    contract.update_pool_state(pool_id1);
+    contract.update_pool_state(pool_id2);
+
+    // Check statuses
+    let settled_pools = contract.get_user_settled_pools(user);
+    assert(settled_pools.len() == 2, 'Should have 2 settled pools');
+
+    // Time warp to 24 hours after pool 2 ended (should transition to closed)
+    start_cheat_block_timestamp(contract.contract_address, current_time + 5400 + 86401);
+
+    // Update the pool states
+    contract.update_pool_state(pool_id2);
+
+    // The get_user_pools function should still return both pools
+    let all_pools = contract.get_user_pools(user, Option::None);
+    assert(all_pools.len() == 2, 'Should have 2 total pools');
+
+    // Closed status isn't specifically queried in the contract, but we can check
+    // that the pool doesn't appear in other statuses
+    let settled_pools = contract.get_user_settled_pools(user);
+    assert(settled_pools.len() == 1, 'Should have 1 settled pool');
+    assert(*settled_pools.at(0) == pool_id1, 'Only pool 1 should be settled');
+
+    stop_cheat_block_timestamp(contract.contract_address);
+}
+
+
+#[test]
+fn test_multiple_users_with_status_transitions() {
+    // Deploy contract and setup users
+    let (contract, admin, erc20_address) = deploy_predifi();
+    let user1 = contract_address_const::<1>();
+    let user2 = contract_address_const::<2>();
+    let user3 = contract_address_const::<3>();
+
+    // Mint tokens to users
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    // Admin needs to mint/transfer tokens to the users
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.transfer(user1, 1000_000_000_000_000_000_000);
+    erc20.transfer(user2, 1000_000_000_000_000_000_000);
+    erc20.transfer(user3, 1000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Approve token spending for all users
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(erc20_address, user1);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(erc20_address, user2);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(erc20_address, user3);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Get current timestamp
+    let current_time = get_block_timestamp();
+
+    // Admin creates pools
+    start_cheat_caller_address(contract.contract_address, admin);
+
+    // Create Pool 1: Sports betting
+    let pool_id1 = contract
+        .create_pool(
+            'Soccer Championship',
+            Pool::WinBet,
+            "Finals match",
+            "soccer.jpg",
+            "https://example.com/soccer",
+            current_time + 3600, // startTime: now + 1 hour
+            current_time + 7200, // lockTime: now + 2 hours
+            current_time + 10800, // endTime: now + 3 hours
+            'Team Red',
+            'Team Blue',
+            100, // minBetAmount
+            1000, // maxBetAmount
+            1, // creatorFee
+            false, // isPrivate
+            Category::Sports,
+        );
+
+    // Create Pool 2: Crypto prediction
+    let pool_id2 = contract
+        .create_pool(
+            'ETH Price Prediction',
+            Pool::WinBet,
+            "Price above or below $5000",
+            "eth.jpg",
+            "https://example.com/eth",
+            current_time + 1800, // startTime: now + 0.5 hour
+            current_time + 5400, // lockTime: now + 1.5 hours
+            current_time + 7200, // endTime: now + 2 hours
+            'Above $5000',
+            'Below $5000',
+            200, // minBetAmount
+            2000, // maxBetAmount
+            2, // creatorFee
+            false, // isPrivate
+            Category::Crypto,
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    // User 1 participates in both pools
+    start_cheat_caller_address(contract.contract_address, user1);
+    contract.vote(pool_id1, 'Team Red', 500);
+    contract.vote(pool_id2, 'Above $5000', 600);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // User 2 participates in both pools
+    start_cheat_caller_address(contract.contract_address, user2);
+    contract.vote(pool_id1, 'Team Blue', 300);
+    contract.vote(pool_id2, 'Below $5000', 400);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // User 3 participates only in pool 1
+    start_cheat_caller_address(contract.contract_address, user3);
+    contract.vote(pool_id1, 'Team Red', 250);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Check participation
+    assert(contract.has_user_participated_in_pool(user1, pool_id1), 'U1 in P1');
+    assert(contract.has_user_participated_in_pool(user1, pool_id2), 'U1 in P2');
+    assert(contract.has_user_participated_in_pool(user2, pool_id1), 'U2 in P1');
+    assert(contract.has_user_participated_in_pool(user2, pool_id2), 'U2 in P2');
+    assert(contract.has_user_participated_in_pool(user3, pool_id1), 'U3 in P1');
+    assert(!contract.has_user_participated_in_pool(user3, pool_id2), 'U3 not in P2');
+
+    // Initial status check - all pools should be active for participating users
+    assert(contract.get_user_active_pools(user1).len() == 2, 'U1: 2 active pools');
+    assert(contract.get_user_active_pools(user2).len() == 2, 'U2: 2 active pools');
+    assert(contract.get_user_active_pools(user3).len() == 1, 'U3: 1 active pool');
+
+    // Time warp to when pool 2 should be locked but pool 1 still active
+    // Now + 1.75 hours (6300 seconds)
+    start_cheat_block_timestamp(contract.contract_address, current_time + 6300);
+
+    // Update pool states
+    contract.update_pool_state(pool_id1);
+    contract.update_pool_state(pool_id2);
+
+    // Check user statuses - pool 2 should be locked for users 1 and 2
+    let user1_active = contract.get_user_active_pools(user1);
+    assert(user1_active.len() == 1, 'U1: 1 active pool');
+    assert(*user1_active.at(0) == pool_id1, 'U1: P1 active');
+
+    let user1_locked = contract.get_user_locked_pools(user1);
+    assert(user1_locked.len() == 1, 'U1: 1 locked pool');
+    assert(*user1_locked.at(0) == pool_id2, 'U1: P2 locked');
+
+    let user2_active = contract.get_user_active_pools(user2);
+    assert(user2_active.len() == 1, 'U2: 1 active pool');
+    assert(*user2_active.at(0) == pool_id1, 'U2: P1 active');
+
+    let user2_locked = contract.get_user_locked_pools(user2);
+    assert(user2_locked.len() == 1, 'U2: 1 locked pool');
+    assert(*user2_locked.at(0) == pool_id2, 'U2: P2 locked');
+
+    // User 3 only has pool 1, which should still be active
+    let user3_active = contract.get_user_active_pools(user3);
+    assert(user3_active.len() == 1, 'U3: 1 active pool');
+    assert(*user3_active.at(0) == pool_id1, 'U3: P1 active');
+
+    // Time warp to when pool 2 should be settled and pool 1 locked
+    // Now + 2.5 hours (9000 seconds)
+    start_cheat_block_timestamp(contract.contract_address, current_time + 9000);
+
+    // Update pool states
+    contract.update_pool_state(pool_id1);
+    contract.update_pool_state(pool_id2);
+
+    // Check user statuses - pool 2 should be settled, pool 1 locked
+    let user1_active = contract.get_user_active_pools(user1);
+    assert(user1_active.len() == 0, 'U1: 0 active pools');
+
+    let user1_locked = contract.get_user_locked_pools(user1);
+    assert(user1_locked.len() == 1, 'U1: 1 locked pool');
+    assert(*user1_locked.at(0) == pool_id1, 'U1: P1 locked');
+
+    let user1_settled = contract.get_user_settled_pools(user1);
+    assert(user1_settled.len() == 1, 'U1: 1 settled pool');
+    assert(*user1_settled.at(0) == pool_id2, 'U1: P2 settled');
+
+    // User 2 should have similar status
+    let user2_locked = contract.get_user_locked_pools(user2);
+    assert(user2_locked.len() == 1, 'U2: 1 locked pool');
+    assert(*user2_locked.at(0) == pool_id1, 'U2: P1 locked');
+
+    let user2_settled = contract.get_user_settled_pools(user2);
+    assert(user2_settled.len() == 1, 'U2: 1 settled pool');
+    assert(*user2_settled.at(0) == pool_id2, 'U2: P2 settled');
+
+    // User 3 should only have pool 1 locked
+    let user3_locked = contract.get_user_locked_pools(user3);
+    assert(user3_locked.len() == 1, 'U3: 1 locked pool');
+    assert(*user3_locked.at(0) == pool_id1, 'U3: P1 locked');
+
+    // Time warp to when both pools should be settled
+    // Now + 4 hours (14400 seconds)
+    start_cheat_block_timestamp(contract.contract_address, current_time + 14400);
+
+    // Update pool states
+    contract.update_pool_state(pool_id1);
+    contract.update_pool_state(pool_id2);
+
+    // Check all users should have both pools settled
+    let user1_settled = contract.get_user_settled_pools(user1);
+    assert(user1_settled.len() == 2, 'U1: 2 settled pools');
+
+    let user2_settled = contract.get_user_settled_pools(user2);
+    assert(user2_settled.len() == 2, 'U2: 2 settled pools');
+
+    let user3_settled = contract.get_user_settled_pools(user3);
+    assert(user3_settled.len() == 1, 'U3: 1 settled pool');
+    assert(*user3_settled.at(0) == pool_id1, 'U3: P1 settled');
+
+    // Time warp to 24 hours after pool 2 ended (transition to closed for pool 2)
+    start_cheat_block_timestamp(contract.contract_address, current_time + 7200 + 86401);
+
+    // Update pool states
+    contract.update_pool_state(pool_id2);
+
+    // Check settled pools - pool 2 should no longer be in settled status
+    let user1_settled = contract.get_user_settled_pools(user1);
+    assert(user1_settled.len() == 1, 'U1: 1 settled pool');
+    assert(*user1_settled.at(0) == pool_id1, 'U1: only P1 settled');
+
+    let user2_settled = contract.get_user_settled_pools(user2);
+    assert(user2_settled.len() == 1, 'U2: 1 settled pool');
+    assert(*user2_settled.at(0) == pool_id1, 'U2: only P1 settled');
+
+    // The get_user_pools function should still return all pools for each user
+    let user1_all_pools = contract.get_user_pools(user1, Option::None);
+    assert(user1_all_pools.len() == 2, 'U1: 2 total pools');
+
+    let user2_all_pools = contract.get_user_pools(user2, Option::None);
+    assert(user2_all_pools.len() == 2, 'U2: 2 total pools');
+
+    let user3_all_pools = contract.get_user_pools(user3, Option::None);
+    assert(user3_all_pools.len() == 1, 'U3: 1 total pool');
+
+    stop_cheat_block_timestamp(contract.contract_address);
+}
