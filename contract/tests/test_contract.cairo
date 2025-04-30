@@ -2472,7 +2472,7 @@ fn test_assign_random_validators_initial_validator() {
     let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
 
     // Verify that both assigned validators are the expected validator
-    assert(assigned_validator1 == expected_validator, 'Should assign initial validator');
+    assert(assigned_validator1 == expected_validator, 'Should assign initial valdator');
     assert(assigned_validator2 == expected_validator, 'Should assign initial validator');
 }
 
