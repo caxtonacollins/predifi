@@ -64,4 +64,16 @@ pub trait IPredifi<TContractState> {
     fn get_user_locked_pools(self: @TContractState, user: ContractAddress) -> Array<u256>;
 
     fn get_user_settled_pools(self: @TContractState, user: ContractAddress) -> Array<u256>;
+
+    fn get_pool_validators(
+        self: @TContractState, pool_id: u256,
+    ) -> (ContractAddress, ContractAddress);
+
+    fn assign_random_validators(ref self: TContractState, pool_id: u256);
+    fn assign_validators(
+        ref self: TContractState,
+        pool_id: u256,
+        validator1: ContractAddress,
+        validator2: ContractAddress,
+    );
 }
