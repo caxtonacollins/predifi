@@ -54,6 +54,7 @@ pub mod Predifi {
     #[storage]
     pub struct Storage {
         pools: Map<u256, PoolDetails>, // pool id to pool details struct
+        pool_ids: Vec<u256>,
         pool_count: u256, // number of pools available totally
         pool_odds: Map<u256, PoolOdds>,
         pool_stakes: Map<u256, UserStake>,
@@ -264,6 +265,7 @@ pub mod Predifi {
             };
 
             self.pools.write(pool_id, pool_details);
+            self.pool_ids.push(pool_id);
 
             // Automatically assign validators to the pool
             self.assign_random_validators(pool_id);
@@ -736,6 +738,26 @@ pub mod Predifi {
                     ),
                 );
         }
+
+        // Get active pools
+        fn get_active_pools(self: @ContractState) -> Array<PoolDetails> {
+            self.get_pools_by_status(Status::Active)
+        }
+
+        // Get locked pools
+        fn get_locked_pools(self: @ContractState) -> Array<PoolDetails> {
+            self.get_pools_by_status(Status::Locked)
+        }
+
+        // Get settled pools
+        fn get_settled_pools(self: @ContractState) -> Array<PoolDetails> {
+            self.get_pools_by_status(Status::Settled)
+        }
+
+        // Get closed pools
+        fn get_closed_pools(self: @ContractState) -> Array<PoolDetails> {
+            self.get_pools_by_status(Status::Closed)
+        }
     }
 
     #[generate_trait]
@@ -881,6 +903,25 @@ pub mod Predifi {
                 self.user_pool_ids.write((user, user_pool_ids_count), pool_id);
                 self.user_pool_ids_count.write(user, user_pool_ids_count + 1);
             }
+        }
+
+        fn get_pools_by_status(self: @ContractState, status: Status) -> Array<PoolDetails> {
+            let mut result = array![];
+            let len = self.pool_ids.len();
+
+            let mut i: u64 = 0;
+            loop {
+                if i >= len {
+                    break;
+                }
+                let pool_id = self.pool_ids.at(i).read();
+                let pool = self.pools.read(pool_id);
+                if pool.status == status {
+                    result.append(pool);
+                }
+                i += 1;
+            }
+            result
         }
     }
 }
