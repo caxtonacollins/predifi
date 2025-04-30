@@ -668,14 +668,17 @@ pub mod Predifi {
             validator3: ContractAddress,
             validator4: ContractAddress,
         ) -> Array<ContractAddress> {
-            // Initialize empty array
-            let mut validators = array![];
-            // Append each validator to the array
             self.validators.push(validator1);
             self.validators.push(validator2);
             self.validators.push(validator3);
             self.validators.push(validator4);
 
+            let mut validators = array![];
+            // Append each validator to the array
+            validators.append(validator1);
+            validators.append(validator2);
+            validators.append(validator3);
+            validators.append(validator4);
             validators
         }
 

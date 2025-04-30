@@ -2525,20 +2525,6 @@ fn pool_exists_in_array(pools: Array<PoolDetails>, pool_id: u256) -> bool {
     }
 }
 
-// #[test]
-// fn test_create_pool() {
-//     let (contract, pool_creator, erc20_address) = deploy_predifi();
-
-//     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-//     // Approve the DISPATCHER contract to spend tokens
-//     start_cheat_caller_address(erc20_address, pool_creator);
-//     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-//     stop_cheat_caller_address(erc20_address);
-//     start_cheat_caller_address(contract.contract_address, pool_creator);
-//     let pool_id = create_default_pool(contract);
-//     assert!(pool_id != 0, "not created");
-// }
-
 #[test]
 fn test_minimal_timing() {
     let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
