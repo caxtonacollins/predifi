@@ -2439,3 +2439,40 @@ fn test_limited_validators_assignment() {
     assert(has_second_validator, 'Second validator not used');
 }
 
+
+#[test]
+fn test_assign_random_validators_initial_validator() {
+    // Deploy the contract
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Get the validator that was added during deployment
+    let expected_validator = contract_address_const::<'validator'>();
+
+    // Explicitly add the validator to the validators list
+    contract
+        .add_validators(
+            expected_validator, expected_validator, expected_validator, expected_validator,
+        );
+
+    // Set up token approval for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create a pool
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assign random validators to the pool
+    contract.assign_random_validators(pool_id);
+
+    // Get the assigned validators
+    let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+
+    // Verify that both assigned validators are the expected validator
+    assert(assigned_validator1 == expected_validator, 'Should assign initial validator');
+    assert(assigned_validator2 == expected_validator, 'Should assign initial validator');
+}
+
