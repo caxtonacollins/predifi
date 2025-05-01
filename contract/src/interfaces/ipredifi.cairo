@@ -92,4 +92,9 @@ pub trait IPredifi<TContractState> {
     fn grant_validator_role(ref self: TContractState, address: ContractAddress);
     fn revoke_validator_role(ref self: TContractState, address: ContractAddress);
     fn is_validator(self: @TContractState, address: ContractAddress) -> bool;
+    // Functions for filtering pools by status
+    fn get_active_pools(self: @TContractState) -> Array<PoolDetails>;
+    fn get_locked_pools(self: @TContractState) -> Array<PoolDetails>;
+    fn get_settled_pools(self: @TContractState) -> Array<PoolDetails>;
+    fn get_closed_pools(self: @TContractState) -> Array<PoolDetails>;
 }

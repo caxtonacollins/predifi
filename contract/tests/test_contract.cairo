@@ -9,9 +9,8 @@ use core::serde::Serde;
 use core::traits::{Into, TryInto};
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, declare,
-    start_cheat_block_timestamp, start_cheat_caller_address,
-    stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp,
+    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{
@@ -1863,7 +1862,7 @@ fn test_user_pools_with_time_based_transitions() {
 
 #[test]
 fn test_multiple_users_with_status_transitions() {
-    // Deploy contract and setup users
+    // Deploy contract and deploy_predifi users
     let (contract, admin, erc20_address) = deploy_predifi();
     let user1 = contract_address_const::<1>();
     let user2 = contract_address_const::<2>();
@@ -2506,7 +2505,7 @@ fn test_resolve_pool_as_validator() {
 
     // Approve tokens
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-    
+
     start_cheat_caller_address(erc20_address, user);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
@@ -2538,7 +2537,6 @@ fn test_resolve_pool_as_validator() {
     start_cheat_caller_address(contract.contract_address, validator);
     contract.resolve_pool(pool_id, false); // Team A wins
     stop_cheat_caller_address(contract.contract_address);
-
 
     // Check outcome
     let (is_resolved, outcome) = contract.get_pool_outcome(pool_id);
@@ -2575,7 +2573,7 @@ fn test_pool_resolution_flow() {
 
     // Approve tokens
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-    
+
     start_cheat_caller_address(erc20_address, user);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
@@ -2684,7 +2682,7 @@ fn test_cannot_resolve_active_pool() {
 
     // Approve tokens
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-    
+
     start_cheat_caller_address(erc20_address, user);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
@@ -2736,7 +2734,6 @@ fn test_full_pool_lifecycle_with_resolution() {
 
     // Explicitly add the validator to the validators list
     contract.add_validators(validator, validator, validator, validator);
-
 
     // 2. Create pool
     start_cheat_caller_address(contract.contract_address, user);
@@ -2791,7 +2788,6 @@ fn test_get_user_stats() {
 
     // Explicitly add the validator to the validators list
     contract.add_validators(validator, validator, validator, validator);
-
 
     start_cheat_caller_address(contract.contract_address, user);
 
@@ -2849,7 +2845,6 @@ fn test_get_user_history_pagination() {
 
     // Explicitly add the validator to the validators list
     contract.add_validators(validator, validator, validator, validator);
-
 
     start_cheat_caller_address(contract.contract_address, user);
 
@@ -2917,7 +2912,6 @@ fn test_calculate_rewards() {
     // Get the validator that was added during deployment
     let validator = contract_address_const::<'validator'>();
 
-
     // Approve token spending
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, user);
@@ -2979,7 +2973,6 @@ fn test_update_user_stats_on_resolution() {
 
     // Explicitly add the validator to the validators list
     contract.add_validators(validator, validator, validator, validator);
-
 
     start_cheat_caller_address(contract.contract_address, user);
 
@@ -3191,3 +3184,315 @@ fn test_validator_flow() {
     let is_valid = contract.is_validator(validator);
     assert(!is_valid, 'Should not be validator');
 }
+// Helper function to create a test pool
+fn create_test_pool(
+    dispatcher: IPredifiDispatcher,
+    poolName: felt252,
+    poolStartTime: u64,
+    poolLockTime: u64,
+    poolEndTime: u64,
+) -> u256 {
+    dispatcher
+        .create_pool(
+            poolName,
+            Pool::WinBet,
+            "Test Description",
+            "Test Image",
+            "Test URL",
+            poolStartTime,
+            poolLockTime,
+            poolEndTime,
+            'Option 1',
+            'Option 2',
+            100_u256,
+            1000_u256,
+            5,
+            false,
+            Category::Sports,
+        )
+}
+
+
+fn pool_exists_in_array(pools: Array<PoolDetails>, pool_id: u256) -> bool {
+    let mut i = 0;
+    let len = pools.len();
+
+    loop {
+        if i >= len {
+            break false;
+        }
+
+        let pool = pools.at(i);
+        // Use the correct reference type for comparison
+        if *pool.pool_id == pool_id {
+            break true;
+        }
+
+        i += 1;
+    }
+}
+
+#[test]
+fn test_minimal_timing() {
+    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    let t0 = 1000;
+    start_cheat_block_timestamp(dispatcher.contract_address, t0);
+
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool_id = create_test_pool(
+        dispatcher, 'Test Pool', t0 + 1000, // 2000
+        t0 + 2000, // 3000
+        t0 + 3000 // 4000
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+}
+
+#[test]
+fn test_get_active_pools() {
+    // Deploy the contract
+    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    // Approve the dispatcher contract to spend tokens
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Set initial block timestamp
+    let initial_time = 1000;
+    start_cheat_block_timestamp(dispatcher.contract_address, initial_time);
+
+    // Impersonate pool_creator for pool creation
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool1_id = create_test_pool(
+        dispatcher, 'Active Pool 1', initial_time + 1600, initial_time + 2000, initial_time + 3000,
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+
+    let time_2 = initial_time + 1000;
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+    start_cheat_block_timestamp(dispatcher.contract_address, time_2);
+
+    // Impersonate pool_creator for pool creation
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool2_id = create_test_pool(
+        dispatcher, 'Active Pool 2', time_2 + 500, time_2 + 1500, time_2 + 3500,
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+
+    // Advance time to 3500 (after both pools' start, before both pools' lock)
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+    let active_time = 1500;
+    start_cheat_block_timestamp(dispatcher.contract_address, active_time);
+
+    // Update pool states before checking
+    dispatcher.update_pool_state(pool1_id);
+    dispatcher.update_pool_state(pool2_id);
+
+    // Get active pools
+    let active_pools = dispatcher.get_active_pools();
+
+    // Debug: check pool statuses
+    let pool1 = dispatcher.get_pool(pool1_id);
+    let pool2 = dispatcher.get_pool(pool2_id);
+
+    assert(pool1.status == Status::Active, 'Pool 1 should be active');
+    assert(pool2.status == Status::Active, 'Pool 2 should be active');
+
+    // Verify we have 2 active pools
+    assert(active_pools.len() == 2, 'Expected 2 active pools');
+
+    // Clean up
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+}
+
+#[test]
+fn test_get_locked_pools() {
+    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    let initial_time = 1000;
+    start_cheat_block_timestamp(dispatcher.contract_address, initial_time);
+
+    // Pool 1
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool1_id = create_test_pool(
+        dispatcher,
+        'Locked Pool 1',
+        initial_time + 1000, // start: 2000
+        initial_time + 2000, // lock: 3000
+        initial_time + 3000 // end: 4000
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+
+    // Set block timestamp for Pool 2 creation
+    let time_2 = initial_time + 1000;
+    start_cheat_block_timestamp(dispatcher.contract_address, time_2);
+
+    // Pool 2 (start time strictly greater than block timestamp)
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool2_id = create_test_pool(
+        dispatcher,
+        'Locked Pool 2',
+        time_2 + 1, // start: 2001
+        time_2 + 1001, // lock: 3001
+        time_2 + 2001 // end: 4001
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+
+    // Advance time to just after both locks but before both ends
+    let locked_time = time_2 + 1200; // 2200 > 2001 (lock), < 4001 (end)
+    start_cheat_block_timestamp(dispatcher.contract_address, locked_time);
+
+    dispatcher.update_pool_state(pool1_id);
+    dispatcher.update_pool_state(pool2_id);
+
+    let locked_pools = dispatcher.get_locked_pools();
+    let pool1 = dispatcher.get_pool(pool1_id);
+    let pool2 = dispatcher.get_pool(pool2_id);
+
+    assert(pool1.status == Status::Locked, 'Pool 1 should be locked');
+    assert(pool2.status == Status::Locked, 'Pool 2 should be locked');
+    assert(locked_pools.len() == 2, 'Expected 2 locked pools');
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+}
+
+#[test]
+fn test_get_settled_pools() {
+    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    let initial_time = 1000;
+    start_cheat_block_timestamp(dispatcher.contract_address, initial_time);
+
+    // Pool 1
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool1_id = create_test_pool(
+        dispatcher,
+        'Settled Pool 1',
+        initial_time + 1000, // start: 2000
+        initial_time + 2000, // lock: 3000
+        initial_time + 3000 // end: 4000
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+
+    // Set block timestamp for Pool 2 creation
+    let time_2 = initial_time + 1500; // 2500
+    start_cheat_block_timestamp(dispatcher.contract_address, time_2);
+
+    // Pool 2 (start time strictly greater than block timestamp)
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool2_id = create_test_pool(
+        dispatcher,
+        'Settled Pool 2',
+        time_2 + 100, // start: 2600
+        time_2 + 1100, // lock: 3600
+        time_2 + 2100 // end: 4600
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+
+    // Advance time to after both ends
+    let settled_time = initial_time + 5000; // 5000 > 4000 and 4600
+    start_cheat_block_timestamp(dispatcher.contract_address, settled_time);
+
+    dispatcher.update_pool_state(pool1_id);
+    dispatcher.update_pool_state(pool2_id);
+
+    let settled_pools = dispatcher.get_settled_pools();
+    let pool1 = dispatcher.get_pool(pool1_id);
+    let pool2 = dispatcher.get_pool(pool2_id);
+    assert(pool1.status == Status::Settled, 'Pool 1 should be settled');
+    assert(pool2.status == Status::Settled, 'Pool 2 should be settled');
+    assert(settled_pools.len() == 2, 'Expected 2 settled pools');
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+}
+
+#[test]
+fn test_get_closed_pools() {
+    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    let initial_time = 1000;
+    start_cheat_block_timestamp(dispatcher.contract_address, initial_time);
+
+    // Pool 1
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool1_id = create_test_pool(
+        dispatcher,
+        'Closed Pool 1',
+        initial_time + 1000, // start: 2000
+        initial_time + 2000, // lock: 3000
+        initial_time + 3000 // end: 4000
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+
+    // Set block timestamp for Pool 2 creation
+    let time_2 = initial_time + 1500; // 2500
+    start_cheat_block_timestamp(dispatcher.contract_address, time_2);
+
+    // Pool 2 (start time strictly greater than block timestamp)
+    start_cheat_caller_address(dispatcher.contract_address, pool_creator);
+    let pool2_id = create_test_pool(
+        dispatcher,
+        'Closed Pool 2',
+        time_2 + 100, // start: 2600
+        time_2 + 1100, // lock: 3600
+        time_2 + 2100 // end: 4600
+    );
+    stop_cheat_caller_address(dispatcher.contract_address);
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+
+    // Assume pool1_id and pool2_id are created, and you have their end times
+    let end_time_1 = 4000; // set to pool 1's end time
+    let end_time_2 = 4600; // set to pool 2's end time
+    let after_end = core::cmp::max(end_time_1, end_time_2) + 1;
+    start_cheat_block_timestamp(dispatcher.contract_address, after_end);
+    dispatcher.update_pool_state(pool1_id);
+    dispatcher.update_pool_state(pool2_id);
+    stop_cheat_block_timestamp(dispatcher.contract_address);
+
+    // Now advance to after end_time + 86401 for the latest pool
+    let after_closed = core::cmp::max(end_time_1, end_time_2) + 86401;
+    start_cheat_block_timestamp(dispatcher.contract_address, after_closed);
+    dispatcher.update_pool_state(pool1_id);
+    dispatcher.update_pool_state(pool2_id);
+
+    let closed_pools = dispatcher.get_closed_pools();
+    let pool1 = dispatcher.get_pool(pool1_id);
+    let pool2 = dispatcher.get_pool(pool2_id);
+    println!("Pool 1 status: {:?}", pool1.status);
+    println!("Pool 2 status: {:?}", pool2.status);
+    println!("closed_pools.len(): {:?}", closed_pools.len());
+    assert(pool1.status == Status::Closed, 'Pool 1 should be closed');
+    assert(pool2.status == Status::Closed, 'Pool 2 should be closed');
+    assert(closed_pools.len() == 2, 'Expected 2 closed pools');
+}
+
