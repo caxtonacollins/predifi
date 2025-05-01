@@ -9,8 +9,9 @@ use core::serde::Serde;
 use core::traits::{Into, TryInto};
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp,
-    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
+    ContractClassTrait, DeclareResultTrait, declare,
+    start_cheat_block_timestamp, start_cheat_caller_address,
+    stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{
@@ -63,6 +64,26 @@ fn create_default_pool(contract: IPredifiDispatcher) -> u256 {
             Category::Sports,
         )
 }
+
+fn setup_validator(contract: IPredifiDispatcher, validator: ContractAddress) -> IPredifiDispatcher {
+    contract.grant_validator_role(validator);
+    contract
+}
+
+fn create_locked_pool(contract: IPredifiDispatcher, admin: ContractAddress) -> u256 {
+    start_cheat_caller_address(contract.contract_address, admin);
+    let pool_id = create_default_pool(contract);
+
+    // Advance time to lock pool
+    let current_time = get_block_timestamp();
+    start_cheat_block_timestamp(contract.contract_address, current_time + 10000);
+    contract.update_pool_state(pool_id);
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    stop_cheat_caller_address(contract.contract_address);
+    pool_id
+}
+
 
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
 
@@ -2476,3 +2497,697 @@ fn test_assign_random_validators_initial_validator() {
     assert(assigned_validator2 == expected_validator, 'Should assign initial validator');
 }
 
+
+#[test]
+fn test_resolve_pool_as_validator() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // Approve tokens
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin needs to mint/transfer tokens to the validator
+    start_cheat_caller_address(erc20_address, user);
+    erc20.transfer(validator, 1000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(erc20_address, validator);
+    erc20.approve(contract.contract_address, 1000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+    // Create pool and vote
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = create_locked_pool(contract, user);
+    contract.vote(pool_id, 'Team A', 200);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Resolve as validator
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id, false); // Team A wins
+    stop_cheat_caller_address(contract.contract_address);
+
+
+    // Check outcome
+    let (is_resolved, outcome) = contract.get_pool_outcome(pool_id);
+    assert(is_resolved, 'Pool should be resolved');
+    assert(!outcome, 'Team A should be the winner');
+}
+
+#[test]
+#[should_panic(expected: 'Caller is not validator')]
+fn test_resolve_pool_as_non_validator() {
+    let (contract, user, erc20_address) = deploy_predifi();
+
+    // Approve tokens
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create pool
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Try to resolve as non-validator - should panic
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.resolve_pool(pool_id, false);
+}
+
+#[test]
+fn test_pool_resolution_flow() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // Approve tokens
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin needs to mint/transfer tokens to the validator
+    start_cheat_caller_address(erc20_address, user);
+    erc20.transfer(validator, 1000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(erc20_address, validator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+    // 1. Create pool
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = create_locked_pool(contract, user);
+
+    // 2. Vote in pool
+    contract.vote(pool_id, 'Team A', 200);
+    contract.vote(pool_id, 'Team B', 300);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // 4. Verify pool is locked
+    let pool = contract.get_pool(pool_id);
+    assert(pool.status == Status::Locked, 'Pool should be locked');
+
+    // 5. Resolve pool
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id, true); // Team B wins
+    stop_cheat_caller_address(contract.contract_address);
+
+    // 6. Verify resolution
+    let (is_resolved, outcome) = contract.get_pool_outcome(pool_id);
+    assert(is_resolved, 'Pool should be resolved');
+    assert(outcome, 'Team B should be the winner');
+
+    // 7. Verify pool status
+    let pool = contract.get_pool(pool_id);
+    assert(pool.status == Status::Settled, 'Pool should be settled');
+}
+
+#[test]
+fn test_pool_resolution_with_contract_functions() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // 1. Setup - Approve tokens
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+    // 2. Create pool and place bets
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = create_locked_pool(contract, user);
+    contract.vote(pool_id, 'Team A', 200); // User bets on Team A
+    stop_cheat_caller_address(contract.contract_address);
+
+    // 3. Advance time to lock the pool
+    let current_time = get_block_timestamp();
+    start_cheat_block_timestamp(contract.contract_address, current_time + 10000);
+
+    // This will automatically transition to Locked status
+    let new_status = contract.update_pool_state(pool_id);
+    assert(new_status == Status::Locked, 'Pool should be locked now');
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    // 4. Resolve pool as validator
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id, false); // false = Team A wins
+    stop_cheat_caller_address(contract.contract_address);
+
+    // 5. Verify resolution using contract view functions
+    let pool = contract.get_pool(pool_id);
+    assert(pool.status == Status::Settled, 'Pool should be settled');
+
+    // Check resolution status through public view function
+    let (is_resolved, winning_option) = contract.get_pool_outcome(pool_id);
+    assert(is_resolved, 'Pool should be resolved');
+    assert(!winning_option, 'Winner is Team A');
+}
+
+#[test]
+#[should_panic(expected: 'Pool must be locked or settled')]
+fn test_cannot_resolve_active_pool() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // Approve tokens
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin needs to mint/transfer tokens to the validator
+    start_cheat_caller_address(erc20_address, user);
+    erc20.transfer(validator, 1000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(erc20_address, validator);
+    erc20.approve(contract.contract_address, 1000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+    // Create pool (still in Active state)
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Attempt to resolve too early - should panic
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id, false);
+}
+
+#[test]
+#[available_gas(100000000000)]
+fn test_full_pool_lifecycle_with_resolution() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // 1. Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+
+    // 2. Create pool
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = create_locked_pool(contract, user);
+
+    // Verify initial state
+    let initial_pool = contract.get_pool(pool_id);
+    assert(initial_pool.status == Status::Active, 'New pool should be active');
+    stop_cheat_caller_address(contract.contract_address);
+
+    // 3. Place bets
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.vote(pool_id, 'Team A', 200);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // 6. Resolve pool
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id, true); // Team B wins
+    stop_cheat_caller_address(contract.contract_address);
+
+    // 7. Verify settled state
+    let settled_pool = contract.get_pool(pool_id);
+    assert(settled_pool.status == Status::Settled, 'Pool should be settled');
+
+    // 8. Check outcome
+    let (is_resolved, outcome) = contract.get_pool_outcome(pool_id);
+    assert(is_resolved, 'Pool should be resolved');
+    assert(outcome, 'Winner is Team B');
+
+    // 10. Verify closed state
+    let closed_pool = contract.get_pool(pool_id);
+    assert(closed_pool.status == Status::Closed, 'Pool should be closed');
+}
+
+#[test]
+#[available_gas(100000000000)]
+fn test_get_user_stats() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // Approve token spending
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create 3 pools
+    let pool_id1 = create_locked_pool(contract, user);
+    let pool_id2 = create_locked_pool(contract, user);
+    let pool_id3 = create_locked_pool(contract, user);
+
+    // Participate in pools
+    contract.vote(pool_id1, 'Team A', 200);
+    contract.vote(pool_id2, 'Team A', 300);
+    contract.vote(pool_id3, 'Team B', 400);
+
+    // Resolve pools as validator
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id1, false); // Team A wins
+    contract.resolve_pool(pool_id2, false); // Team A wins
+    contract.resolve_pool(pool_id3, true); // Team B wins
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Get user stats
+    let stats = contract.get_user_stats(user);
+
+    // Verify stats
+    assert(stats.total_stakes == 900, 'Total stakes incorrect');
+    assert(stats.wins == 2, 'Win count incorrect');
+    assert(stats.losses == 1, 'Loss count incorrect');
+    assert(stats.win_loss_ratio == 2, 'Win/loss ratio incorrect');
+    assert(stats.pending_rewards > 0, 'Pending rewards should be > 0');
+    assert(stats.total_rewards == 0, 'Total rewards should be 0');
+    assert(stats.active_pools.len() == 0, 'No active pools');
+    assert(stats.locked_pools.len() == 0, 'No locked pools');
+    assert(stats.settled_pools.len() == 3, 'All pools should be settled');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[available_gas(100000000000)]
+fn test_get_user_history_pagination() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // Approve token spending
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create 5 pools
+    let mut pool_ids = ArrayTrait::new();
+    let num_pools = 5_u256;
+    let mut i = 0_u256;
+    while i < num_pools {
+        let pool_id = create_locked_pool(contract, user);
+        pool_ids.append(pool_id);
+        i += 1;
+    }
+
+    // Participate in all pools - using u256 values
+    i = 0_u256;
+    while i < num_pools {
+        let pool_id = *pool_ids.at(i.try_into().unwrap());
+        let amount = 100_u256 * (i + 1_u256); // Now using u256 arithmetic
+        contract.vote(pool_id, 'Team A', amount);
+        i += 1;
+    }
+
+    // Resolve pools
+    start_cheat_caller_address(contract.contract_address, validator);
+    i = 0_u256;
+    while i < num_pools {
+        let pool_id = *pool_ids.at(i.try_into().unwrap());
+        contract.resolve_pool(pool_id, false); // All Team A wins
+        i += 1;
+    }
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Test pagination
+    let page_size = 2_u256;
+    let (page1, total1) = contract.get_user_history(user, page_size, 0_u256);
+    let (page2, total2) = contract.get_user_history(user, page_size, 1_u256);
+    let (page3, total3) = contract.get_user_history(user, page_size, 2_u256);
+
+    // Verify pagination results
+    assert(total1 == num_pools, 'Total count incorrect');
+    assert(total2 == num_pools, 'Total count incorrect');
+    assert(total3 == num_pools, 'Total count incorrect');
+
+    assert(page1.len() == page_size.try_into().unwrap(), 'Page 1 size incorrect');
+    assert(page2.len() == page_size.try_into().unwrap(), 'Page 2 size incorrect');
+    assert(page3.len() == 1, 'Page 3 should have 1 item');
+
+    // Verify activities contain expected data
+    let activity1 = page1[0];
+    assert(*activity1.amount == 100_u256, 'First activity amount incorrect');
+    assert(
+        activity1.pool_id == pool_ids.at(0.try_into().unwrap()), 'First activity pool ID mismatch',
+    );
+
+    let activity3 = page2[0];
+    assert(*activity3.amount == 300_u256, 'Third activity amount incorrect');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[available_gas(100000000000)]
+fn test_calculate_rewards() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+
+    // Approve token spending
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create a pool
+    let pool_id = create_locked_pool(contract, user);
+
+    // Simulate pool activity
+    contract.vote(pool_id, 'Team A', 200);
+
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id, false); // Team A wins
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Set up pool totals through proper contract functions
+    // (This would normally be set during voting/resolution)
+    let pool = contract.get_pool(pool_id);
+    let expected_reward = (200 * pool.totalBetAmountStrk) / pool.totalStakeOption1;
+
+    // Calculate actual reward
+    let actual_reward = contract.calculate_reward(pool_id, user);
+
+    // Verify reward calculation
+    assert(actual_reward > 0, 'Reward should be positive');
+    assert(actual_reward <= expected_reward, 'Reward exceeds max. possible');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[available_gas(100000000000)]
+fn test_update_user_stats_on_resolution() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // Approve token spending
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create and participate in a pool
+    let pool_id = create_locked_pool(contract, user);
+    contract.vote(pool_id, 'Team A', 500);
+
+    // Initial stats check
+    let initial_stats = contract.get_user_stats(user);
+    assert(initial_stats.total_stakes == 500, 'Initial stake not recorded');
+    assert(initial_stats.wins == 0, 'Initial wins should be 0');
+
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id, false); // Team A wins
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Verify updated stats
+    let updated_stats = contract.get_user_stats(user);
+    assert(updated_stats.wins == 1, 'Win not recorded');
+    assert(updated_stats.pending_rewards > 0, 'Reward not pending');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[available_gas(100000000000)]
+fn test_multiple_users_statistics() {
+    let (contract, admin, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    let user1 = contract_address_const::<'user1'>();
+    let user2 = contract_address_const::<'user2'>();
+
+    // Fund and approve tokens for both users
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.transfer(user1, 1000_000_000_000_000_000_000);
+    erc20.transfer(user2, 1000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(erc20_address, user1);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(erc20_address, user2);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+    // Admin creates a pool
+    start_cheat_caller_address(contract.contract_address, admin);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // User1 votes (will win)
+    start_cheat_caller_address(contract.contract_address, user1);
+    contract.vote(pool_id, 'Team A', 300);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // User2 votes (will lose)
+    start_cheat_caller_address(contract.contract_address, user2);
+    contract.vote(pool_id, 'Team B', 700);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Advance time and resolve pool
+    let current_time = get_block_timestamp();
+    start_cheat_block_timestamp(contract.contract_address, current_time + 10000);
+    contract.update_pool_state(pool_id);
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    // Resolve pool (Team A wins)
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id, false);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Verify user1 stats (winner)
+    let stats1 = contract.get_user_stats(user1);
+    assert(stats1.wins == 1, 'User1 has 1 win');
+    assert(stats1.losses == 0, 'User1 has 0 losses');
+    assert(stats1.pending_rewards > 0, 'User1 has pending rewards');
+
+    // Verify user2 stats (loser)
+    let stats2 = contract.get_user_stats(user2);
+    assert(stats2.wins == 0, 'User2 has 0 wins');
+    assert(stats2.losses == 1, 'User2 has 1 loss');
+    assert(stats2.pending_rewards == 0, 'User2 has no pending rewards');
+
+    // Verify history
+    let (history1, _) = contract.get_user_history(user1, 10, 0);
+    assert(history1.len() == 1, 'User1 history incorrect');
+    assert(*history1[0].won, 'User1 activity should be win');
+
+    let (history2, _) = contract.get_user_history(user2, 10, 0);
+    assert(history2.len() == 1, 'User2 history incorrect');
+    assert(!*history2[0].won, 'User2 activity should be loss');
+}
+
+#[test]
+#[available_gas(100000000000)]
+fn test_user_stats_after_multiple_pools() {
+    let (contract, user, erc20_address) = deploy_predifi();
+    // Get the validator that was added during deployment
+    let validator = contract_address_const::<'validator'>();
+
+    // Approve token spending
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, user);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Explicitly add the validator to the validators list
+    contract.add_validators(validator, validator, validator, validator);
+
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create and participate in 3 pools with different outcomes
+    let pool_id1 = create_locked_pool(contract, user);
+    contract.vote(pool_id1, 'Team A', 200); // Will win
+
+    let pool_id2 = create_locked_pool(contract, user);
+    contract.vote(pool_id2, 'Team A', 300); // Will win
+
+    let pool_id3 = create_locked_pool(contract, user);
+    contract.vote(pool_id3, 'Team B', 400); // Will lose
+
+    // Advance time to lock pools
+    let current_time = get_block_timestamp();
+    start_cheat_block_timestamp(contract.contract_address, current_time + 10000);
+    contract.update_pool_state(pool_id1);
+    contract.update_pool_state(pool_id2);
+    contract.update_pool_state(pool_id3);
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    // Resolve pools as validator
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.resolve_pool(pool_id1, false); // Team A wins
+    contract.resolve_pool(pool_id2, false); // Team A wins
+    contract.resolve_pool(pool_id3, true); // Team B wins
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Get final stats
+    let stats = contract.get_user_stats(user);
+
+    // Verify aggregated stats
+    assert(stats.total_stakes == 900, 'Total stakes incorrect');
+    assert(stats.wins == 2, 'Win count incorrect');
+    assert(stats.losses == 1, 'Loss count incorrect');
+    assert(stats.win_loss_ratio == 2, 'Win/loss ratio incorrect');
+    assert(stats.pending_rewards > 0, 'Should have pending rewards');
+    assert(stats.settled_pools.len() == 3, 'All pools should be settled');
+
+    // Verify history
+    let (history, total) = contract.get_user_history(user, 10, 0);
+    assert(total == 3, 'Total history items incorrect');
+    assert(history.len() == 3, 'History length incorrect');
+
+    // Count wins in history
+    let mut win_count = 0;
+    let mut loss_count = 0;
+
+    let mut i = 0;
+    while i < history.len() {
+        if *history[i].won {
+            win_count += 1;
+        } else {
+            loss_count += 1;
+        }
+        i += 1;
+    }
+
+    assert(win_count == 2, 'History win count incorrect');
+    assert(loss_count == 1, 'History loss count incorrect');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_validator_flow() {
+    let (contract, admin, _) = deploy_predifi();
+    let validator = contract_address_const::<'validator'>();
+
+    // Admin grants validator role
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.grant_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Check role assignment
+    let is_valid = contract.is_validator(validator);
+    assert(is_valid, 'Should be validator');
+
+    // Revoke role
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.revoke_validator_role(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Verify revocation
+    let is_valid = contract.is_validator(validator);
+    assert(!is_valid, 'Should not be validator');
+}
