@@ -4,19 +4,18 @@ pub mod Predifi {
     use core::hash::{HashStateExTrait, HashStateTrait};
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
+    use core::byte_array::ByteArray;
     // oz imports
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
     use openzeppelin::token::erc20::interface::{
-        ERC20ABIDispatcher, ERC20ABIDispatcherTrait, IERC20Dispatcher, IERC20DispatcherTrait,
-        IERC20MetadataDispatcher, IERC20MetadataDispatcherTrait,
+        IERC20Dispatcher, IERC20DispatcherTrait
     };
-    use starknet::storage::{
-        Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
-        StoragePointerWriteAccess, Vec, VecTrait,
-    };
+    use starknet::storage::{Map, Vec, VecTrait};
+    use starknet::storage::StorageAccess;
+    use starknet::storage::StorageBaseAddress;
     use starknet::{
-        ContractAddress, contract_address_const, get_block_timestamp, get_caller_address,
+        ContractAddress, get_block_timestamp, get_caller_address,
         get_contract_address,
     };
     use crate::base::errors::Errors::{
@@ -210,39 +209,115 @@ pub mod Predifi {
             isPrivate: bool,
             category: Category,
         ) -> u256 {
-            // Validation checks
+            // Step 1: Validate all input parameters
+            Private::validate_pool_parameters(
+                ref self,
+                poolStartTime,
+                poolLockTime,
+                poolEndTime,
+                minBetAmount,
+                maxBetAmount,
+                creatorFee
+            );
+
+            let creator_address = get_caller_address();
+            
+            // Step 2: Handle fee collection
+            self.collect_pool_creation_fee(creator_address);
+
+            // Step 3: Generate unique pool ID
+            let pool_id = self.generate_unique_pool_id();
+
+            // Step 4: Create and store pool data
+            let pool_details = Private::create_pool_details(
+                ref self,
+                poolName,
+                poolType,
+                poolDescription,
+                poolImage,
+                poolEventSourceUrl,
+                poolStartTime,
+                poolLockTime,
+                poolEndTime,
+                option1,
+                option2,
+                minBetAmount,
+                maxBetAmount,
+                creatorFee,
+                isPrivate,
+                category
+            );
+            
+            // Step 5: Store pool data and initialize related data
+            self.store_pool_data(pool_id, pool_details);
+
+            // Step 6: Setup pool validators and odds
+            self.setup_pool_validators_and_odds(pool_id);
+
+            pool_id
+        }
+
+        /// Validates all pool parameters
+        fn validate_pool_parameters(
+            ref self: ContractState,
+            poolStartTime: u64,
+            poolLockTime: u64,
+            poolEndTime: u64,
+            minBetAmount: u256,
+            maxBetAmount: u256,
+            creatorFee: u8,
+        ) {
             assert!(poolStartTime < poolLockTime, "Start time must be before lock time");
             assert!(poolLockTime < poolEndTime, "Lock time must be before end time");
             assert!(minBetAmount > 0, "Minimum bet must be greater than 0");
             assert!(
-                maxBetAmount >= minBetAmount, "Max bet must be greater than or equal to min bet",
+                maxBetAmount >= minBetAmount,
+                "Max bet must be greater than or equal to min bet",
             );
             let current_time = get_block_timestamp();
             assert!(current_time < poolStartTime, "Start time must be in the future");
             assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
+        }
 
-            let creator_address = get_caller_address();
-
-            // Collect pool creation fee (1 STRK)
-            self.collect_pool_creation_fee(creator_address);
-
+        /// Generates a unique pool ID
+        fn generate_unique_pool_id(ref self: ContractState) -> u256 {
             let mut pool_id = self.generate_deterministic_number();
-
-            // While a pool with this pool_id already exists, generate a new one.
             while self.retrieve_pool(pool_id) {
                 pool_id = self.generate_deterministic_number();
             }
+            pool_id
+        }
 
-            // Create pool details structure
-            let pool_details = PoolDetails {
-                pool_id: pool_id,
+        /// Creates pool details structure
+        fn create_pool_details(
+            ref self: ContractState,
+            pool_id: u256,
+            creator_address: ContractAddress,
+            poolName: felt252,
+            poolType: Pool,
+            poolDescription: ByteArray,
+            poolImage: ByteArray,
+            poolEventSourceUrl: ByteArray,
+            poolStartTime: u64,
+            poolLockTime: u64,
+            poolEndTime: u64,
+            option1: felt252,
+            option2: felt252,
+            minBetAmount: u256,
+            maxBetAmount: u256,
+            creatorFee: u8,
+            isPrivate: bool,
+            category: Category,
+        ) -> PoolDetails {
+            PoolDetails {
+                pool_id,
                 address: creator_address,
                 poolName,
                 poolType,
                 poolDescription,
                 poolImage,
                 poolEventSourceUrl,
-                createdTimeStamp: current_time,
+                createdTimeStamp: get_block_timestamp(),
                 poolStartTime,
                 poolLockTime,
                 poolEndTime,
@@ -260,31 +335,33 @@ pub mod Predifi {
                 totalStakeOption2: 0_u256,
                 totalSharesOption1: 0_u256,
                 totalSharesOption2: 0_u256,
-                initial_share_price: 5000, // 0.5 in basis points (10000 = 1.0)
+                initial_share_price: 5000,
                 exists: true,
-            };
+            }
+        }
 
+        /// Stores pool data and updates related state
+        fn store_pool_data(ref self: ContractState, pool_id: u256, pool_details: PoolDetails) {
             self.pools.write(pool_id, pool_details);
             self.pool_ids.push(pool_id);
+            self.pool_count.write(self.pool_count.read() + 1);
+        }
 
-            // Automatically assign validators to the pool
+        /// Sets up pool validators and initializes odds
+        fn setup_pool_validators_and_odds(ref self: ContractState, pool_id: u256) {
+            // Assign validators
             self.assign_random_validators(pool_id);
 
+            // Initialize odds
             let initial_odds = PoolOdds {
-                option1_odds: 5000, // 0.5 in decimal (5000/10000)
+                option1_odds: 5000,
                 option2_odds: 5000,
-                option1_probability: 5000, // 50% probability
+                option1_probability: 5000,
                 option2_probability: 5000,
                 implied_probability1: 5000,
                 implied_probability2: 5000,
             };
-
             self.pool_odds.write(pool_id, initial_odds);
-
-            // Add to pool count
-            self.pool_count.write(self.pool_count.read() + 1);
-
-            pool_id
         }
 
         fn pool_count(self: @ContractState) -> u256 {
@@ -765,7 +842,113 @@ pub mod Predifi {
 
     #[generate_trait]
     impl Private of PrivateTrait {
-        /// Generates a deterministic `u256` with 6 decimal places.
+        /// Generates a unique pool ID using deterministic number generation
+        fn generate_unique_pool_id(ref self: ContractState) -> u256 {
+            let pool_id = self.generate_deterministic_number();
+            assert(self.retrieve_pool(pool_id) == false, "Pool ID already exists");
+            pool_id
+        }
+
+        /// Creates pool details structure from input parameters
+        fn create_pool_details(
+            ref self: ContractState,
+            poolName: felt252,
+            poolType: Pool,
+            poolDescription: ByteArray,
+            poolImage: ByteArray,
+            poolEventSourceUrl: ByteArray,
+            poolStartTime: u64,
+            poolLockTime: u64,
+            poolEndTime: u64,
+            option1: felt252,
+            option2: felt252,
+            minBetAmount: u256,
+            maxBetAmount: u256,
+            creatorFee: u8,
+            isPrivate: bool,
+            category: Category,
+        ) -> PoolDetails {
+            let creator = get_caller_address();
+            let current_time = get_block_timestamp();
+            let pool_id = self.generate_unique_pool_id();
+            PoolDetails {
+                pool_id,
+                address: creator,
+                poolName,
+                poolType,
+                poolDescription,
+                poolImage,
+                poolEventSourceUrl,
+                createdTimeStamp: current_time,
+                poolStartTime,
+                poolLockTime,
+                poolEndTime,
+                option1,
+                option2,
+                minBetAmount,
+                maxBetAmount,
+                creatorFee,
+                status: Status::Active,
+                isPrivate,
+                category,
+                totalBetAmountStrk: 0_u256,
+                totalBetCount: 0_u8,
+                totalStakeOption1: 0_u256,
+                totalStakeOption2: 0_u256,
+                totalSharesOption1: 0_u256,
+                totalSharesOption2: 0_u256,
+                initial_share_price: 5000_u16,
+                exists: true,
+            }
+        }
+
+        /// Stores pool data in contract storage
+        fn store_pool_data(ref self: ContractState, pool_id: u256, pool_details: PoolDetails) {
+            self.pools.write(pool_id, pool_details);
+            self.pool_ids.push(pool_id);
+            let current_count = self.pool_count.read();
+            self.pool_count.write(current_count + 1);
+        }
+
+        /// Sets up validators and initial odds for a new pool
+        fn setup_pool_validators_and_odds(ref self: ContractState, pool_id: u256) {
+            // Assign random validators to the pool
+            self.assign_random_validators(pool_id);
+
+            // Initialize pool odds with equal probability (5000/10000 = 0.5)
+            let initial_odds = PoolOdds {
+                option1_odds: 5000,
+                option2_odds: 5000,
+                option1_probability: 5000,
+                option2_probability: 5000,
+                implied_probability1: 2,
+                implied_probability2: 2,
+            };
+            self.pool_odds.write(pool_id, initial_odds);
+        }
+        /// Validates all pool parameters to ensure they meet requirements
+        fn validate_pool_parameters(
+            ref self: ContractState,
+            poolStartTime: u64,
+            poolLockTime: u64,
+            poolEndTime: u64,
+            minBetAmount: u256,
+            maxBetAmount: u256,
+            creatorFee: u8,
+        ) {
+            assert!(poolStartTime < poolLockTime, "Start time must be before lock time");
+            assert!(poolLockTime < poolEndTime, "Lock time must be before end time");
+            assert!(minBetAmount > 0, "Minimum bet must be greater than 0");
+            assert!(
+                maxBetAmount >= minBetAmount,
+                "Max bet must be greater than or equal to min bet",
+            );
+            let current_time = get_block_timestamp();
+            assert!(current_time < poolStartTime, "Start time must be in the future");
+            assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
+        }
+
+        /// Generates a deterministic u256 with 6 decimal places.
         /// Combines block number, timestamp, and sender address for uniqueness.
 
         fn generate_deterministic_number(ref self: ContractState) -> u256 {
