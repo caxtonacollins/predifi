@@ -226,7 +226,7 @@ pub mod Predifi {
             self.collect_pool_creation_fee(creator_address);
 
             // Step 3: Generate unique pool ID
-            let pool_id = self.generate_unique_pool_id();
+            let pool_id = Private::generate_unique_pool_id(ref self);
 
             // Step 4: Create and store pool data
             let pool_details = Private::create_pool_details(
@@ -249,119 +249,12 @@ pub mod Predifi {
             );
             
             // Step 5: Store pool data and initialize related data
-            self.store_pool_data(pool_id, pool_details);
+            Private::store_pool_data(ref self, pool_id, pool_details);
 
             // Step 6: Setup pool validators and odds
-            self.setup_pool_validators_and_odds(pool_id);
+            Private::setup_pool_validators_and_odds(ref self, pool_id);
 
             pool_id
-        }
-
-        /// Validates all pool parameters
-        fn validate_pool_parameters(
-            ref self: ContractState,
-            poolStartTime: u64,
-            poolLockTime: u64,
-            poolEndTime: u64,
-            minBetAmount: u256,
-            maxBetAmount: u256,
-            creatorFee: u8,
-        ) {
-            assert!(poolStartTime < poolLockTime, "Start time must be before lock time");
-            assert!(poolLockTime < poolEndTime, "Lock time must be before end time");
-            assert!(minBetAmount > 0, "Minimum bet must be greater than 0");
-            assert!(
-                maxBetAmount >= minBetAmount,
-                "Max bet must be greater than or equal to min bet",
-            );
-            let current_time = get_block_timestamp();
-            assert!(current_time < poolStartTime, "Start time must be in the future");
-            assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
-        }
-
-        /// Generates a unique pool ID
-        fn generate_unique_pool_id(ref self: ContractState) -> u256 {
-            let mut pool_id = self.generate_deterministic_number();
-            while self.retrieve_pool(pool_id) {
-                pool_id = self.generate_deterministic_number();
-            }
-            pool_id
-        }
-
-        /// Creates pool details structure
-        fn create_pool_details(
-            ref self: ContractState,
-            pool_id: u256,
-            creator_address: ContractAddress,
-            poolName: felt252,
-            poolType: Pool,
-            poolDescription: ByteArray,
-            poolImage: ByteArray,
-            poolEventSourceUrl: ByteArray,
-            poolStartTime: u64,
-            poolLockTime: u64,
-            poolEndTime: u64,
-            option1: felt252,
-            option2: felt252,
-            minBetAmount: u256,
-            maxBetAmount: u256,
-            creatorFee: u8,
-            isPrivate: bool,
-            category: Category,
-        ) -> PoolDetails {
-            PoolDetails {
-                pool_id,
-                address: creator_address,
-                poolName,
-                poolType,
-                poolDescription,
-                poolImage,
-                poolEventSourceUrl,
-                createdTimeStamp: get_block_timestamp(),
-                poolStartTime,
-                poolLockTime,
-                poolEndTime,
-                option1,
-                option2,
-                minBetAmount,
-                maxBetAmount,
-                creatorFee,
-                status: Status::Active,
-                isPrivate,
-                category,
-                totalBetAmountStrk: 0_u256,
-                totalBetCount: 0_u8,
-                totalStakeOption1: 0_u256,
-                totalStakeOption2: 0_u256,
-                totalSharesOption1: 0_u256,
-                totalSharesOption2: 0_u256,
-                initial_share_price: 5000,
-                exists: true,
-            }
-        }
-
-        /// Stores pool data and updates related state
-        fn store_pool_data(ref self: ContractState, pool_id: u256, pool_details: PoolDetails) {
-            self.pools.write(pool_id, pool_details);
-            self.pool_ids.push(pool_id);
-            self.pool_count.write(self.pool_count.read() + 1);
-        }
-
-        /// Sets up pool validators and initializes odds
-        fn setup_pool_validators_and_odds(ref self: ContractState, pool_id: u256) {
-            // Assign validators
-            self.assign_random_validators(pool_id);
-
-            // Initialize odds
-            let initial_odds = PoolOdds {
-                option1_odds: 5000,
-                option2_odds: 5000,
-                option1_probability: 5000,
-                option2_probability: 5000,
-                implied_probability1: 5000,
-                implied_probability2: 5000,
-            };
-            self.pool_odds.write(pool_id, initial_odds);
         }
 
         fn pool_count(self: @ContractState) -> u256 {
@@ -503,27 +396,49 @@ pub mod Predifi {
             if option == option1 {
                 pool.totalStakeOption1 += amount;
                 pool
-                    .totalSharesOption1 += self
-                    .calculate_shares(amount, pool.totalStakeOption1, pool.totalStakeOption2);
+                    .totalSharesOption1 += Private::calculate_shares(
+                        ref self,
+                        amount, 
+                        pool.totalStakeOption1, 
+                        pool.totalStakeOption2
+                    );
             } else {
                 pool.totalStakeOption2 += amount;
                 pool
-                    .totalSharesOption2 += self
-                    .calculate_shares(amount, pool.totalStakeOption2, pool.totalStakeOption1);
+                    .totalSharesOption2 += Private::calculate_shares(
+                        ref self,
+                        amount, 
+                        pool.totalStakeOption2, 
+                        pool.totalStakeOption1
+                    );
             }
             pool.totalBetAmountStrk += amount;
             pool.totalBetCount += 1;
 
             // Update pool odds
-            let odds = self
-                .calculate_odds(pool.pool_id, pool.totalStakeOption1, pool.totalStakeOption2);
+            let odds = Private::calculate_odds(
+                ref self, 
+                pool.pool_id, 
+                pool.totalStakeOption1, 
+                pool.totalStakeOption2
+            );
             self.pool_odds.write(pool_id, odds);
 
             // Calculate the user's shares
             let shares: u256 = if option == option1 {
-                self.calculate_shares(amount, pool.totalStakeOption1, pool.totalStakeOption2)
+                Private::calculate_shares(
+                    ref self, 
+                    amount, 
+                    pool.totalStakeOption1, 
+                    pool.totalStakeOption2
+                )
             } else {
-                self.calculate_shares(amount, pool.totalStakeOption2, pool.totalStakeOption1)
+                Private::calculate_shares(
+                    ref self, 
+                    amount, 
+                    pool.totalStakeOption2, 
+                    pool.totalStakeOption1
+                )
             };
 
             // Store user stake
@@ -538,7 +453,7 @@ pub mod Predifi {
             self.pool_vote.write(pool.pool_id, option == option2);
             self.pool_stakes.write(pool.pool_id, user_stake);
             self.pools.write(pool.pool_id, pool);
-            self.track_user_participation(address, pool_id);
+            Private::track_user_participation(ref self, address, pool_id);
             // Emit event
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
@@ -569,8 +484,8 @@ pub mod Predifi {
             // grant the validator role
             self.accesscontrol._grant_role(VALIDATOR_ROLE, address);
             // add caller to validator list
-            self.validators.append().write(address);
-            self.track_user_participation(address, pool_id);
+            self.validators.append(address);
+            Private::track_user_participation(ref self, address, pool_id);
             // emit event
             self.emit(UserStaked { pool_id, address, amount });
         }
@@ -704,7 +619,7 @@ pub mod Predifi {
         ) -> u256 {
             // Validator fee is fixed at 10%
             let validator_fee_percentage = 5_u8;
-            let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
+            let validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
 
             self.validator_fee.write(pool_id, validator_fee);
             validator_fee
@@ -821,22 +736,22 @@ pub mod Predifi {
 
         // Get active pools
         fn get_active_pools(self: @ContractState) -> Array<PoolDetails> {
-            self.get_pools_by_status(Status::Active)
+            Private::get_pools_by_status(self, Status::Active)
         }
 
         // Get locked pools
         fn get_locked_pools(self: @ContractState) -> Array<PoolDetails> {
-            self.get_pools_by_status(Status::Locked)
+            Private::get_pools_by_status(self, Status::Locked)
         }
 
         // Get settled pools
         fn get_settled_pools(self: @ContractState) -> Array<PoolDetails> {
-            self.get_pools_by_status(Status::Settled)
+            Private::get_pools_by_status(self, Status::Settled)
         }
 
         // Get closed pools
         fn get_closed_pools(self: @ContractState) -> Array<PoolDetails> {
-            self.get_pools_by_status(Status::Closed)
+            Private::get_pools_by_status(self, Status::Closed)
         }
     }
 
@@ -845,7 +760,7 @@ pub mod Predifi {
         /// Generates a unique pool ID using deterministic number generation
         fn generate_unique_pool_id(ref self: ContractState) -> u256 {
             let pool_id = self.generate_deterministic_number();
-            assert(self.retrieve_pool(pool_id) == false, "Pool ID already exists");
+            assert(!self.retrieve_pool(pool_id), "Pool ID already exists");
             pool_id
         }
 
@@ -867,247 +782,4 @@ pub mod Predifi {
             creatorFee: u8,
             isPrivate: bool,
             category: Category,
-        ) -> PoolDetails {
-            let creator = get_caller_address();
-            let current_time = get_block_timestamp();
-            let pool_id = self.generate_unique_pool_id();
-            PoolDetails {
-                pool_id,
-                address: creator,
-                poolName,
-                poolType,
-                poolDescription,
-                poolImage,
-                poolEventSourceUrl,
-                createdTimeStamp: current_time,
-                poolStartTime,
-                poolLockTime,
-                poolEndTime,
-                option1,
-                option2,
-                minBetAmount,
-                maxBetAmount,
-                creatorFee,
-                status: Status::Active,
-                isPrivate,
-                category,
-                totalBetAmountStrk: 0_u256,
-                totalBetCount: 0_u8,
-                totalStakeOption1: 0_u256,
-                totalStakeOption2: 0_u256,
-                totalSharesOption1: 0_u256,
-                totalSharesOption2: 0_u256,
-                initial_share_price: 5000_u16,
-                exists: true,
-            }
-        }
-
-        /// Stores pool data in contract storage
-        fn store_pool_data(ref self: ContractState, pool_id: u256, pool_details: PoolDetails) {
-            self.pools.write(pool_id, pool_details);
-            self.pool_ids.push(pool_id);
-            let current_count = self.pool_count.read();
-            self.pool_count.write(current_count + 1);
-        }
-
-        /// Sets up validators and initial odds for a new pool
-        fn setup_pool_validators_and_odds(ref self: ContractState, pool_id: u256) {
-            // Assign random validators to the pool
-            self.assign_random_validators(pool_id);
-
-            // Initialize pool odds with equal probability (5000/10000 = 0.5)
-            let initial_odds = PoolOdds {
-                option1_odds: 5000,
-                option2_odds: 5000,
-                option1_probability: 5000,
-                option2_probability: 5000,
-                implied_probability1: 2,
-                implied_probability2: 2,
-            };
-            self.pool_odds.write(pool_id, initial_odds);
-        }
-        /// Validates all pool parameters to ensure they meet requirements
-        fn validate_pool_parameters(
-            ref self: ContractState,
-            poolStartTime: u64,
-            poolLockTime: u64,
-            poolEndTime: u64,
-            minBetAmount: u256,
-            maxBetAmount: u256,
-            creatorFee: u8,
-        ) {
-            assert!(poolStartTime < poolLockTime, "Start time must be before lock time");
-            assert!(poolLockTime < poolEndTime, "Lock time must be before end time");
-            assert!(minBetAmount > 0, "Minimum bet must be greater than 0");
-            assert!(
-                maxBetAmount >= minBetAmount,
-                "Max bet must be greater than or equal to min bet",
-            );
-            let current_time = get_block_timestamp();
-            assert!(current_time < poolStartTime, "Start time must be in the future");
-            assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
-        }
-
-        /// Generates a deterministic u256 with 6 decimal places.
-        /// Combines block number, timestamp, and sender address for uniqueness.
-
-        fn generate_deterministic_number(ref self: ContractState) -> u256 {
-            let nonce: felt252 = self.nonce.read();
-            let nonci: felt252 = self.save_user_with_pedersen(nonce);
-            // Increment the nonce and update storage.
-            self.nonce.write(nonci);
-
-            let username: felt252 = get_contract_address().into();
-            let id: felt252 = get_caller_address().into();
-            let password: felt252 = nonce.into();
-            let login = HashingProperties { username, password };
-            let user = Hashed { id, login };
-
-            let poseidon_hash: felt252 = PoseidonTrait::new().update_with(user).finalize();
-            self.user_hash_poseidon.write(poseidon_hash);
-
-            // Convert poseidon_hash from felt252 to u256.
-            let hash_as_u256: u256 = poseidon_hash.try_into().unwrap();
-
-            // Define divisor for 6 digits: 1,000,000.
-            let divisor: u256 = 1000000;
-
-            // Calculate quotient and remainder manually.
-            let quotient: u256 = hash_as_u256 / divisor;
-            let remainder: u256 = hash_as_u256 - quotient * divisor;
-
-            remainder
-        }
-
-
-        fn save_user_with_pedersen(ref self: ContractState, salt: felt252) -> felt252 {
-            let username: felt252 = salt;
-            let id: felt252 = get_caller_address().into();
-            let password: felt252 = get_block_timestamp().into();
-            let login = HashingProperties { username, password };
-            let user = Hashed { id, login };
-
-            let pedersen_hash = PedersenTrait::new(0).update_with(user).finalize();
-
-            self.user_hash_pedersen.write(pedersen_hash);
-            pedersen_hash
-        }
-        fn calculate_shares(
-            ref self: ContractState,
-            amount: u256,
-            total_stake_selected_option: u256,
-            total_stake_other_option: u256,
-        ) -> u256 {
-            let total_pool_amount = total_stake_selected_option + total_stake_other_option;
-
-            if total_stake_selected_option == 0 {
-                return amount;
-            }
-
-            let shares = (amount * total_pool_amount) / (total_stake_selected_option + 1);
-            shares
-        }
-
-        fn calculate_odds(
-            ref self: ContractState,
-            pool_id: u256,
-            total_stake_option1: u256,
-            total_stake_option2: u256,
-        ) -> PoolOdds {
-            // Fetch the current pool odds
-            let current_pool_odds = self.pool_odds.read(pool_id);
-
-            // If no current pool odds exist, use the initial odds (5000 for both options)
-            let initial_odds = 5000; // 0.5 in decimal (5000/10000)
-            let current_option1_odds = if current_pool_odds.option1_odds == 0 {
-                initial_odds
-            } else {
-                current_pool_odds.option1_odds
-            };
-            let current_option2_odds = if current_pool_odds.option2_odds == 0 {
-                initial_odds
-            } else {
-                current_pool_odds.option2_odds
-            };
-
-            // Calculate the total pool amount
-            let total_pool_amount = total_stake_option1 + total_stake_option2;
-
-            // If no stakes are placed, return the current pool odds
-            if total_pool_amount == 0 {
-                return PoolOdds {
-                    option1_odds: current_option1_odds,
-                    option2_odds: current_option2_odds,
-                    option1_probability: current_option1_odds,
-                    option2_probability: current_option2_odds,
-                    implied_probability1: 10000 / current_option1_odds,
-                    implied_probability2: 10000 / current_option2_odds,
-                };
-            }
-
-            // Calculate the new odds based on the stakes
-            let new_option1_odds = (total_stake_option2 * 10000) / total_pool_amount;
-            let new_option2_odds = (total_stake_option1 * 10000) / total_pool_amount;
-
-            // update the new odds with the current odds (weighted average)
-            let option1_odds = (current_option1_odds + new_option1_odds) / 2;
-            let option2_odds = (current_option2_odds + new_option2_odds) / 2;
-
-            // Calculate probabilities
-            let option1_probability = option1_odds;
-            let option2_probability = option2_odds;
-
-            // Calculate implied probabilities
-            let implied_probability1 = 10000 / option1_odds;
-            let implied_probability2 = 10000 / option2_odds;
-
-            // Return the updated PoolOdds struct
-            PoolOdds {
-                option1_odds: option1_odds,
-                option2_odds: option2_odds,
-                option1_probability,
-                option2_probability,
-                implied_probability1,
-                implied_probability2,
-            }
-        }
-
-        /// Tracks user participation in a pool
-        /// This function is called when a user votes or stakes in a pool
-        fn track_user_participation(ref self: ContractState, user: ContractAddress, pool_id: u256) {
-            // Check if this is a new participation
-            if !self.user_participated_pools.read((user, pool_id)) {
-                // Mark this pool as participated
-                self.user_participated_pools.write((user, pool_id), true);
-
-                // Increment the user's pool count
-                let current_count = self.user_pool_count.read(user);
-                self.user_pool_count.write(user, current_count + 1);
-
-                // Add this pool_id to the user's list of participated pools
-                let user_pool_ids_count = self.user_pool_ids_count.read(user);
-                self.user_pool_ids.write((user, user_pool_ids_count), pool_id);
-                self.user_pool_ids_count.write(user, user_pool_ids_count + 1);
-            }
-        }
-
-        fn get_pools_by_status(self: @ContractState, status: Status) -> Array<PoolDetails> {
-            let mut result = array![];
-            let len = self.pool_ids.len();
-
-            let mut i: u64 = 0;
-            loop {
-                if i >= len {
-                    break;
-                }
-                let pool_id = self.pool_ids.at(i).read();
-                let pool = self.pools.read(pool_id);
-                if pool.status == status {
-                    result.append(pool);
-                }
-                i += 1;
-            }
-            result
-        }
-    }
-}
+        ) ->
