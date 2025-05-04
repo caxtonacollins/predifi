@@ -38,13 +38,6 @@ pub trait IPredifi<TContractState> {
     fn calculate_validator_fee(ref self: TContractState, pool_id: u256, total_amount: u256) -> u256;
     fn distribute_validator_fees(ref self: TContractState, pool_id: u256);
     fn retrieve_validator_fee(self: @TContractState, pool_id: u256) -> u256;
-    fn add_validators(
-        ref self: TContractState,
-        validator1: ContractAddress,
-        validator2: ContractAddress,
-        validator3: ContractAddress,
-        validator4: ContractAddress,
-    ) -> Array<ContractAddress>;
     fn update_pool_state(ref self: TContractState, pool_id: u256) -> Status;
     fn manually_update_pool_state(
         ref self: TContractState, pool_id: u256, new_status: Status,
@@ -76,6 +69,10 @@ pub trait IPredifi<TContractState> {
         validator1: ContractAddress,
         validator2: ContractAddress,
     );
+    fn add_validator(ref self: TContractState, address: ContractAddress);
+    fn remove_validator(ref self: TContractState, address: ContractAddress);
+    fn is_validator(self: @TContractState, address: ContractAddress) -> bool;
+    fn get_all_validators(self: @TContractState) -> Array<ContractAddress>;
     // Functions for filtering pools by status
     fn get_active_pools(self: @TContractState) -> Array<PoolDetails>;
     fn get_locked_pools(self: @TContractState) -> Array<PoolDetails>;
