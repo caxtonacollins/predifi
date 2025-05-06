@@ -5,7 +5,7 @@ pub mod Predifi {
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
     // oz imports
-    use openzeppelin::access::accesscontrol::AccessControlComponent;
+    use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
     use openzeppelin::token::erc20::interface::{
         ERC20ABIDispatcher, ERC20ABIDispatcherTrait, IERC20Dispatcher, IERC20DispatcherTrait,
@@ -35,7 +35,6 @@ pub mod Predifi {
 
     // Validator role
     const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
-    const ADMIN_ROLE: felt252 = selector!("ADMIN_ROLE");
 
     // components definition
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
@@ -65,7 +64,7 @@ pub mod Predifi {
         pub accesscontrol: AccessControlComponent::Storage,
         #[substorage(v0)]
         src5: SRC5Component::Storage,
-        validators: Vec<ContractAddress>,
+        pub validators: Vec<ContractAddress>,
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
@@ -99,7 +98,7 @@ pub mod Predifi {
     // Events
     #[event]
     #[derive(Drop, starknet::Event)]
-    enum Event {
+    pub enum Event {
         BetPlaced: BetPlaced,
         UserStaked: UserStaked,
         FeesCollected: FeesCollected,
@@ -107,6 +106,8 @@ pub mod Predifi {
         PoolResolved: PoolResolved,
         FeeWithdrawn: FeeWithdrawn,
         ValidatorsAssigned: ValidatorsAssigned,
+        ValidatorAdded: ValidatorAdded,
+        ValidatorRemoved: ValidatorRemoved,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -166,6 +167,18 @@ pub mod Predifi {
         timestamp: u64,
     }
 
+    #[derive(Drop, starknet::Event)]
+    pub struct ValidatorAdded {
+        pub account: ContractAddress,
+        pub caller: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct ValidatorRemoved {
+        pub account: ContractAddress,
+        pub caller: ContractAddress,
+    }
+
     #[derive(Drop, Hash)]
     struct HashingProperties {
         username: felt252,
@@ -179,15 +192,9 @@ pub mod Predifi {
     }
 
     #[constructor]
-    fn constructor(
-        ref self: ContractState,
-        token_addr: ContractAddress,
-        validator: ContractAddress,
-        admin: ContractAddress,
-    ) {
+    fn constructor(ref self: ContractState, token_addr: ContractAddress, admin: ContractAddress) {
         self.token_addr.write(token_addr);
-        self.accesscontrol._grant_role(ADMIN_ROLE, admin);
-        self.accesscontrol._grant_role(VALIDATOR_ROLE, validator)
+        self.accesscontrol._grant_role(DEFAULT_ADMIN_ROLE, admin);
     }
 
     #[abi(embed_v0)]
@@ -356,7 +363,7 @@ pub mod Predifi {
 
             // Check if caller has appropriate role (admin or validator)
             let caller = get_caller_address();
-            let is_admin = self.accesscontrol.has_role(ADMIN_ROLE, caller);
+            let is_admin = self.accesscontrol.has_role(DEFAULT_ADMIN_ROLE, caller);
             let is_validator = self.accesscontrol.has_role(VALIDATOR_ROLE, caller);
             assert(is_admin || is_validator, 'Caller not authorized');
 
@@ -661,28 +668,6 @@ pub mod Predifi {
             self.validator_fee.write(pool_id, 0);
         }
 
-        fn add_validators(
-            ref self: ContractState,
-            validator1: ContractAddress,
-            validator2: ContractAddress,
-            validator3: ContractAddress,
-            validator4: ContractAddress,
-        ) -> Array<ContractAddress> {
-            self.validators.push(validator1);
-            self.validators.push(validator2);
-            self.validators.push(validator3);
-            self.validators.push(validator4);
-
-            let mut validators = array![];
-            // Append each validator to the array
-            validators.append(validator1);
-            validators.append(validator2);
-            validators.append(validator3);
-            validators.append(validator4);
-            validators
-        }
-
-
         fn get_pool_validators(
             self: @ContractState, pool_id: u256,
         ) -> (ContractAddress, ContractAddress) {
@@ -740,6 +725,58 @@ pub mod Predifi {
                         ValidatorsAssigned { pool_id, validator1, validator2, timestamp },
                     ),
                 );
+        }
+
+        fn add_validator(ref self: ContractState, address: ContractAddress) {
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            if (self.is_validator(address)) {
+                return;
+            }
+            self.accesscontrol.grant_role(VALIDATOR_ROLE, address);
+            self.validators.push(address);
+
+            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
+        }
+
+        fn remove_validator(ref self: ContractState, address: ContractAddress) {
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            if (!self.is_validator(address)) {
+                return;
+            }
+
+            self.accesscontrol.revoke_role(VALIDATOR_ROLE, address);
+
+            let num_validators = self.validators.len();
+            for i in 0..num_validators {
+                if (self.validators.at(i).read() == address) {
+                    // Pop last element from validators list
+                    let last_validator = self.validators.pop().unwrap();
+
+                    // If revoked address isn't last element, overwrite with popped element
+                    if (i < (num_validators - 1)) {
+                        self.validators.at(i).write(last_validator);
+                    }
+
+                    self.emit(ValidatorRemoved { account: address, caller: get_caller_address() });
+                    return;
+                }
+            }
+        }
+
+        fn is_validator(self: @ContractState, address: ContractAddress) -> bool {
+            self.accesscontrol.has_role(VALIDATOR_ROLE, address)
+        }
+
+        fn get_all_validators(self: @ContractState) -> Array<ContractAddress> {
+            let mut validators = array![];
+
+            for i in 0..self.validators.len() {
+                let validator = self.validators.at(i).read();
+                validators.append(validator);
+            }
+            validators
         }
 
         // Get active pools

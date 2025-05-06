@@ -1,18 +1,22 @@
 use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
-use contract::interfaces::ipredifi::{IPredifiDispatcher, IPredifiDispatcherTrait};
+use contract::interfaces::ipredifi::{IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait};
+use contract::predifi::Predifi;
 use contract::utils::Utils;
 use contract::utils::Utils::InternalFunctionsTrait;
 use core::array::ArrayTrait;
 use core::felt252;
 use core::serde::Serde;
 use core::traits::{Into, TryInto};
+use openzeppelin::access::accesscontrol::AccessControlComponent::InternalTrait as AccessControlInternalTrait;
+use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp,
-    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
+    ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait, declare, spy_events,
+    start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
+    stop_cheat_caller_address, test_address,
 };
-use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
+use starknet::storage::{MutableVecTrait, StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{
     ClassHash, ContractAddress, contract_address_const, get_block_timestamp, get_caller_address,
     get_contract_address,
@@ -26,7 +30,6 @@ const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
 fn deploy_predifi() -> (IPredifiDispatcher, ContractAddress, ContractAddress) {
     let owner: ContractAddress = contract_address_const::<'owner'>();
     let admin: ContractAddress = contract_address_const::<'admin'>();
-    let validator: ContractAddress = contract_address_const::<'validator'>();
 
     // Deploy mock ERC20
     let erc20_class = declare("STARKTOKEN").unwrap().contract_class();
@@ -36,7 +39,7 @@ fn deploy_predifi() -> (IPredifiDispatcher, ContractAddress, ContractAddress) {
     let contract_class = declare("Predifi").unwrap().contract_class();
 
     let (contract_address, _) = contract_class
-        .deploy(@array![erc20_address.into(), admin.into(), validator.into()])
+        .deploy(@array![erc20_address.into(), admin.into()])
         .unwrap();
     let dispatcher = IPredifiDispatcher { contract_address };
     (dispatcher, POOL_CREATOR, erc20_address)
@@ -491,6 +494,7 @@ fn test_get_pool_count() {
 #[test]
 fn test_stake_successful() {
     let (contract, caller, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -944,13 +948,21 @@ fn test_collect_validation_fee() {
 #[test]
 fn test_distribute_validation_fee() {
     let (mut dispatcher, POOL_CREATOR, erc20_address) = deploy_predifi();
+
     let validator1 = contract_address_const::<'validator1'>();
     let validator2 = contract_address_const::<'validator2'>();
     let validator3 = contract_address_const::<'validator3'>();
     let validator4 = contract_address_const::<'validator4'>();
 
     let erc20 = IERC20Dispatcher { contract_address: erc20_address };
-    let validators = dispatcher.add_validators(validator1, validator2, validator3, validator4);
+
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(dispatcher.contract_address, admin);
+    dispatcher.add_validator(validator1);
+    dispatcher.add_validator(validator2);
+    dispatcher.add_validator(validator3);
+    dispatcher.add_validator(validator4);
+    stop_cheat_caller_address(dispatcher.contract_address);
 
     let initial_contract_balance = erc20.balance_of(dispatcher.contract_address);
     assert(initial_contract_balance == 0, 'incorrect deployment details');
@@ -1320,13 +1332,10 @@ fn test_validator_can_update_state() {
     stop_cheat_caller_address(erc20_address);
 
     // Add validators
-    let validator_array = contract
-        .add_validators(
-            validator,
-            contract_address_const::<'v2'>(),
-            contract_address_const::<'v3'>(),
-            contract_address_const::<'v4'>(),
-        );
+    let admin_role = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin_role);
+    contract.add_validator(validator);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Get current time
     let current_time = get_block_timestamp();
@@ -2079,7 +2088,13 @@ fn test_assign_random_validators() {
     let zero_address: ContractAddress = contract_address_const::<'zero'>();
 
     // Add validators to the contract
-    let _validators = contract.add_validators(validator1, validator2, validator3, validator4);
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(validator1);
+    contract.add_validator(validator2);
+    contract.add_validator(validator3);
+    contract.add_validator(validator4);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -2128,7 +2143,11 @@ fn test_assign_exactly_two_validators() {
     let zero_address: ContractAddress = contract_address_const::<'zero'>();
 
     // Add validators to the contract (overriding any existing validators)
-    contract.add_validators(validator1, validator2, validator1, validator2);
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(validator1);
+    contract.add_validator(validator2);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -2220,7 +2239,13 @@ fn test_assign_multiple_validators() {
     let validator4 = contract_address_const::<'validator4'>();
 
     // Add validators to the contract
-    contract.add_validators(validator1, validator2, validator3, validator4);
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(validator1);
+    contract.add_validator(validator2);
+    contract.add_validator(validator3);
+    contract.add_validator(validator4);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -2332,7 +2357,10 @@ fn test_limited_validators_assignment() {
     let single_validator = contract_address_const::<'single_validator'>();
 
     // Add only one validator to the contract
-    contract.add_validators(single_validator, single_validator, single_validator, single_validator);
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(single_validator);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -2400,8 +2428,10 @@ fn test_limited_validators_assignment() {
     // Now add a second validator and verify it gets used for new pools
     let second_validator = contract_address_const::<'second_validator'>();
 
-    // Clear validators and add two different ones
-    contract.add_validators(single_validator, second_validator, single_validator, second_validator);
+    // Add second validator to the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(second_validator);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Create one more pool
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -2449,10 +2479,10 @@ fn test_assign_random_validators_initial_validator() {
     let expected_validator = contract_address_const::<'validator'>();
 
     // Explicitly add the validator to the validators list
-    contract
-        .add_validators(
-            expected_validator, expected_validator, expected_validator, expected_validator,
-        );
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(expected_validator);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -2476,6 +2506,115 @@ fn test_assign_random_validators_initial_validator() {
     assert(assigned_validator2 == expected_validator, 'Should assign initial validator');
 }
 
+#[test]
+fn test_add_validator() {
+    let mut state = Predifi::contract_state_for_testing();
+    let test_address: ContractAddress = test_address();
+
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let validator: ContractAddress = contract_address_const::<'validator'>();
+
+    // Initialize access control and grant DEFAULT_ADMIN_ROLE to admin
+    AccessControlInternalTrait::initializer(ref state.accesscontrol);
+    AccessControlInternalTrait::_grant_role(ref state.accesscontrol, DEFAULT_ADMIN_ROLE, admin);
+
+    // Act as admin to add a validator
+    start_cheat_caller_address(test_address, admin);
+    let mut spy = spy_events();
+    IPredifi::add_validator(ref state, validator);
+    stop_cheat_caller_address(test_address);
+
+    // Assert validator is added to the list
+    let added_validator: ContractAddress = state.validators.at(0).read();
+    assert(added_validator == validator, 'Validator not added');
+
+    // Assert validator role is set
+    let is_validator = IPredifi::is_validator(@state, validator);
+    assert(is_validator, 'Validator role not set');
+
+    // Assert event emitted
+    let expected_event = Predifi::Event::ValidatorAdded(
+        Predifi::ValidatorAdded { account: validator, caller: admin },
+    );
+    spy.assert_emitted(@array![(test_address, expected_event)]);
+}
+
+#[test]
+#[should_panic(expected: 'Caller is missing role')]
+fn test_add_validator_unauthorized() {
+    let mut state = Predifi::contract_state_for_testing();
+    let validator: ContractAddress = contract_address_const::<'validator'>();
+
+    AccessControlInternalTrait::initializer(ref state.accesscontrol);
+
+    // Unauthorized caller attempt to add a new validator
+    IPredifi::add_validator(ref state, validator);
+}
+
+#[test]
+fn test_remove_validator_role() {
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let validator1: ContractAddress = contract_address_const::<'validator1'>();
+    let validator2: ContractAddress = contract_address_const::<'validator2'>();
+
+    let mut state = Predifi::contract_state_for_testing();
+    let test_address: ContractAddress = test_address();
+
+    // Initialize access control and grant DEFAULT_ADMIN_ROLE to admin
+    AccessControlInternalTrait::initializer(ref state.accesscontrol);
+    AccessControlInternalTrait::_grant_role(ref state.accesscontrol, DEFAULT_ADMIN_ROLE, admin);
+
+    // Act as admin to add two validators
+    start_cheat_caller_address(test_address, admin);
+    IPredifi::add_validator(ref state, validator1);
+    IPredifi::add_validator(ref state, validator2);
+    stop_cheat_caller_address(test_address);
+
+    // Act as admin to remove validator1
+    start_cheat_caller_address(test_address, admin);
+    let mut spy = spy_events();
+    IPredifi::remove_validator(ref state, validator1);
+    stop_cheat_caller_address(test_address);
+
+    // Assert only one validator remains
+    let validator_count = state.validators.len();
+    assert(validator_count == 1, 'Expected only one validator');
+
+    // Assert validator2 is the remaining validator
+    let remaining_validator: ContractAddress = state.validators.at(0).read();
+    assert(remaining_validator == validator2, 'Validator2 should remain');
+
+    // Assert validator1 role is revoked
+    let is_validator = IPredifi::is_validator(@state, validator1);
+    assert(!is_validator, 'Validator1 was not revoked');
+
+    // Assert correct event was emitted
+    let expected_event = Predifi::Event::ValidatorRemoved(
+        Predifi::ValidatorRemoved { account: validator1, caller: admin },
+    );
+    spy.assert_emitted(@array![(test_address, expected_event)]);
+
+    // Act as admin to remove the second validator
+    start_cheat_caller_address(test_address, admin);
+    IPredifi::remove_validator(ref state, validator2);
+    stop_cheat_caller_address(test_address);
+
+    // Assert no validators remain
+    let validator_count = state.validators.len();
+    assert(validator_count == 0, 'Expected zero validators');
+}
+
+#[test]
+#[should_panic(expected: 'Caller is missing role')]
+fn test_remove_validator_unauthorized() {
+    let mut state = Predifi::contract_state_for_testing();
+    let validator: ContractAddress = contract_address_const::<'validator'>();
+
+    AccessControlInternalTrait::initializer(ref state.accesscontrol);
+
+    // Unauthorized caller attempt to remove the validator role
+    IPredifi::remove_validator(ref state, validator);
+}
 
 // Helper function to create a test pool
 fn create_test_pool(
