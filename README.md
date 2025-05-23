@@ -85,9 +85,8 @@ We welcome contributions! Please follow these steps:
 ## Testing Requirements
 
 Before submitting your PR:
-1. Run `bash test_local.sh` to ensure compatibility with our workflow actions
-2. Set up your environment variable: `export RPC_URL=https://api.cartridge.gg/x/starknet/mainnet`
-3. All tests must pass locally before proceeding
+1. Set up your environment variable: `export RPC_URL=https://api.cartridge.gg/x/starknet/mainnet`
+2. All tests must pass locally before proceeding
 
 ## Pull Request Process
 
@@ -111,7 +110,7 @@ Before submitting your PR:
 
 Need help with your contribution? You can:
 - Open an issue in the GitHub repository
-- Join our Telegram channel for community assistance
+- Join our Telegram channel for community assistance 
 - Check existing documentation and discussions
 
 We aim to review all contributions promptly and appreciate your efforts to improve the project!
