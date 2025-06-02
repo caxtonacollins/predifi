@@ -78,4 +78,15 @@ pub trait IPredifi<TContractState> {
     fn get_locked_pools(self: @TContractState) -> Array<PoolDetails>;
     fn get_settled_pools(self: @TContractState) -> Array<PoolDetails>;
     fn get_closed_pools(self: @TContractState) -> Array<PoolDetails>;
+    
+    //dispute functionality
+    fn raise_dispute(ref self: TContractState, pool_id: u256);
+    fn resolve_dispute(ref self: TContractState, pool_id: u256, winning_option: bool);
+    fn get_dispute_count(self: @TContractState, pool_id: u256) -> u256;
+    fn get_dispute_threshold(self: @TContractState) -> u256;
+    fn has_user_disputed(self: @TContractState, pool_id: u256, user: ContractAddress) -> bool;
+    fn is_pool_suspended(self: @TContractState, pool_id: u256) -> bool;
+    fn get_suspended_pools(self: @TContractState) -> Array<PoolDetails>;
+    fn validate_outcome(ref self: TContractState, pool_id: u256, outcome: bool);
+    fn claim_reward(ref self: TContractState, pool_id: u256) -> u256;
 }

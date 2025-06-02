@@ -14,6 +14,7 @@ pub enum Status {
     Locked,
     Settled,
     Closed,
+    Suspended,
 }
 
 
@@ -42,6 +43,7 @@ fn StatusType(status: Status) -> felt252 {
         Status::Locked => 'locked',
         Status::Settled => 'settled',
         Status::Closed => 'closed',
+        Status::Suspended => 'suspended',
     }
 }
 
