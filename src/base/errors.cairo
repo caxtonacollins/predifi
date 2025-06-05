@@ -11,4 +11,10 @@ pub mod Errors {
     pub const TOTAL_STAKE_MUST_BE_ONE_STRK: felt252 = 'Total stake should be 1 STRK';
     pub const TOTAL_SHARE_MUST_BE_ONE_STRK: felt252 = 'Total shares should be 1 STRK';
     pub const USER_SHARE_MUST_BE_ONE_STRK: felt252 = 'User shares should be 1 STRK';
+    pub const POOL_SUSPENDED: felt252 = 'Pool is suspended';
+    pub const DISPUTE_ALREADY_RAISED: felt252 = 'User already raised dispute';
+    pub const POOL_NOT_SUSPENDED: felt252 = 'Pool is not suspended';
+    pub const POOL_NOT_LOCKED: felt252 = 'Pool is not locked';
+    pub const POOL_NOT_SETTLED: felt252 = 'Pool is not settled';
+    pub const POOL_NOT_RESOLVED: felt252 = 'Pool is not resolved';
 }
