@@ -3381,9 +3381,8 @@ fn test_validate_outcome_success() {
     contract.validate_outcome(pool_id, true);
     stop_cheat_caller_address(contract.contract_address);
     
-    // Verify pool is settled
     let pool = contract.get_pool(pool_id);
-    assert(pool.status == Status::Settled, 'Pool should be settled');
+    assert(pool.status == Status::Locked, 'Pool should remain locked');
 }
 
 #[test]

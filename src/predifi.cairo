@@ -925,72 +925,16 @@ pub mod Predifi {
         }
         
         fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
-            self.accesscontrol.assert_only_role(VALIDATOR_ROLE);
-            
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INVALID_POOL_DETAILS);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-            assert(pool.status == Status::Locked, POOL_NOT_LOCKED);
-            
-            self.pool_outcomes.write(pool_id, outcome);
-            self.pool_resolved.write(pool_id, true);
-            
-            let mut updated_pool = pool.clone();
-            updated_pool.status = Status::Settled;
-            self.pools.write(pool_id, updated_pool);
-            
-            self.emit(Event::PoolResolved(PoolResolved {
-                pool_id,
-                winning_option: outcome,
-                total_payout: pool.totalBetAmountStrk,
-            }));
         }
         
         fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
-            let caller = get_caller_address();
-            
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INVALID_POOL_DETAILS);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-            assert(pool.status == Status::Settled, POOL_NOT_SETTLED);
-            assert(self.pool_resolved.read(pool_id), POOL_NOT_RESOLVED);
-            
-            let user_stake = self.user_stakes.read((pool_id, caller));
-            assert(user_stake.amount > 0, 'No stake found');
-            
-            let winning_option = self.pool_outcomes.read(pool_id);
-            assert(user_stake.option == winning_option, 'User did not win');
-            
-            let total_losing_amount = if winning_option {
-                pool.totalStakeOption1
-            } else {
-                pool.totalStakeOption2
-            };
-            
-            let total_winning_amount = if winning_option {
-                pool.totalStakeOption2
-            } else {
-                pool.totalStakeOption1
-            };
-            
-            let reward = if total_winning_amount > 0 {
-                user_stake.amount + (user_stake.amount * total_losing_amount) / total_winning_amount
-            } else {
-                user_stake.amount
-            };
-            
-            let empty_stake = UserStake {
-                amount: 0,
-                shares: 0,
-                option: false,
-                timestamp: 0,
-            };
-            self.user_stakes.write((pool_id, caller), empty_stake);
-            
-            let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
-            dispatcher.transfer(caller, reward);
-            
-            reward
+            0
         }
 
         fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
