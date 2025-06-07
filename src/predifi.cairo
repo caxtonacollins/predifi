@@ -102,7 +102,6 @@ pub mod Predifi {
         pool_dispute_count: Map<u256, u256>,
         pool_previous_status: Map<u256, Status>,
         dispute_threshold: u256,
-        
         // strg strc for Validator confirmation and validation results
         pool_validator_confirmations: Map<
             (u256, ContractAddress), bool,
@@ -261,7 +260,9 @@ pub mod Predifi {
         self.token_addr.write(token_addr);
         self.accesscontrol._grant_role(DEFAULT_ADMIN_ROLE, admin);
         self.dispute_threshold.write(3);
-        self.required_validator_confirmations.write(2); // Require at least 2 validator confirmations to settle
+        self
+            .required_validator_confirmations
+            .write(2); // Require at least 2 validator confirmations to settle
     }
 
     #[abi(embed_v0)]
@@ -1091,9 +1092,10 @@ pub mod Predifi {
 
         // @notice gets pool validation status
         // @param pool_id The ID of the pool to check
-        // @return A tuple containing the validation count, whether the pool is settled, and the final outcome
-        // @dev This function checks the number of validations, whether the pool is settled, and the final outcome
-        // @dev It is used to determine if the pool has reached the required number of confirmations for settlement
+        // @return A tuple containing the validation count, whether the pool is settled, and the
+        // final outcome @dev This function checks the number of validations, whether the pool is
+        // settled, and the final outcome @dev It is used to determine if the pool has reached the
+        // required number of confirmations for settlement
         fn get_pool_validation_status(self: @ContractState, pool_id: u256) -> (u256, bool, bool) {
             let validation_count = self.pool_validation_count.read(pool_id);
             let required_confirmations = self.required_validator_confirmations.read();
@@ -1107,8 +1109,9 @@ pub mod Predifi {
         // @param pool_id The ID of the pool to check
         // @param validator The address of the validator to check
         // @return A tuple containing whether the validator has confirmed and their selected option
-        // @dev This function checks if a specific validator has confirmed their validation for a pool
-        // @dev It is used to track individual validator confirmations and their selected options
+        // @dev This function checks if a specific validator has confirmed their validation for a
+        // pool @dev It is used to track individual validator confirmations and their selected
+        // options
         fn get_validator_confirmation(
             self: @ContractState, pool_id: u256, validator: ContractAddress,
         ) -> (bool, bool) {
@@ -1120,7 +1123,8 @@ pub mod Predifi {
 
         // @notice sets the required number of validator confirmations for a pool
         // @param count The number of confirmations required
-        // @dev This function allows the admin to set the number of required confirmations for a pool
+        // @dev This function allows the admin to set the number of required confirmations for a
+        // pool
         fn set_required_validator_confirmations(ref self: ContractState, count: u256) {
             // Only admin can set this
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
